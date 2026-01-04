@@ -23,12 +23,11 @@
       border: 1px solid rgba(255,255,255,.18);
       backdrop-filter: blur(10px);
     }
-    .pill b { font-weight:800; color:#ffffff; letter-spacing:.2px; }
+    .pill b { font-weight:900; color:#ffffff; letter-spacing:.2px; }
     .pill span { color: rgba(255,255,255,.95); }
 
     .langPill{
-      pointer-events:auto; /* clickable */
-      cursor: default;
+      pointer-events:auto;
       user-select:none;
     }
     .langBtn{
@@ -40,7 +39,7 @@
       color:#ffffff;
       padding:6px 10px;
       border-radius:999px;
-      font-weight:800;
+      font-weight:900;
     }
     .langBtn.active{
       background:#ffffff;
@@ -55,10 +54,10 @@
 
     .card {
       pointer-events:auto;
-      width:min(620px, calc(100vw - 24px));
+      width:min(720px, calc(100vw - 24px));
       padding:18px 18px 14px;
       border-radius:16px;
-      background: rgba(20,22,28,.85);
+      background: rgba(20,22,28,.88);
       border: 1px solid rgba(255,255,255,.14);
       backdrop-filter: blur(10px);
       box-shadow: 0 10px 40px rgba(0,0,0,.35);
@@ -67,7 +66,7 @@
     .card h1{
       margin: 0 0 10px;
       font-size: 24px;
-      font-weight: 900;
+      font-weight: 950;
       color:#ffffff;
       text-shadow: 0 2px 8px rgba(0,0,0,.85);
       letter-spacing: .2px;
@@ -78,7 +77,7 @@
       color: rgba(255,255,255,.92);
       line-height: 1.45;
       text-shadow: 0 1px 4px rgba(0,0,0,.75);
-      white-space: pre-line; /* to render \n */
+      white-space: pre-line;
     }
 
     .btnRow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
@@ -86,13 +85,22 @@
     button {
       pointer-events:auto;
       appearance:none; border:0; border-radius:12px;
-      padding:10px 12px; font-weight:900; cursor:pointer;
+      padding:10px 12px; font-weight:950; cursor:pointer;
       background: #e9eefc; color:#0b0e14;
     }
     button.secondary {
       background: rgba(233,238,252,.14);
       color:#ffffff;
       border:1px solid rgba(233,238,252,.18);
+    }
+    button.danger {
+      background: rgba(255, 107, 138, .18);
+      color:#ffffff;
+      border:1px solid rgba(255, 107, 138, .25);
+    }
+    button:disabled{
+      opacity:.5;
+      cursor:not-allowed;
     }
     button:active { transform: translateY(1px); }
 
@@ -110,11 +118,44 @@
       backdrop-filter: blur(10px);
       pointer-events:none;
       color: rgba(255,255,255,.95);
-      max-width: min(780px, calc(100vw - 24px));
+      max-width: min(820px, calc(100vw - 24px));
       text-align:center;
       text-shadow: 0 2px 6px rgba(0,0,0,.85);
       white-space: pre-line;
     }
+
+    .grid2{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    @media (max-width: 680px){
+      .grid2{ grid-template-columns: 1fr; }
+    }
+    .panel{
+      padding: 12px 12px 10px;
+      border-radius: 14px;
+      background: rgba(0,0,0,.30);
+      border: 1px solid rgba(255,255,255,.10);
+    }
+    .panel h2{
+      margin: 0 0 8px;
+      font-size: 14px;
+      font-weight: 950;
+      letter-spacing: .2px;
+      color: rgba(255,255,255,.95);
+    }
+    .row{
+      display:flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items:center;
+      padding: 8px 0;
+      border-top: 1px solid rgba(255,255,255,.08);
+    }
+    .row:first-of-type{ border-top: 0; padding-top: 0; }
+    .row b{ font-weight: 950; }
+    .mono{ font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
@@ -122,9 +163,10 @@
 
   <div class="hud">
     <div class="top">
-      <div class="pill"><b id="lblTime">Time</b> <span id="time">60.0</span>s</div>
-      <div class="pill"><b id="lblScore">Score</b> <span id="score">0</span></div>
-      <div class="pill"><b id="lblHp">HP</b> <span id="hp">100</span></div>
+      <div class="pill"><b id="lblTime">Time</b> <span class="mono" id="time">60.0</span>s</div>
+      <div class="pill"><b id="lblScore">Score</b> <span class="mono" id="score">0</span></div>
+      <div class="pill"><b id="lblHp">HP</b> <span class="mono" id="hp">100</span></div>
+      <div class="pill"><b id="lblCoins">Coins</b> <span class="mono" id="coins">0</span></div>
 
       <div class="pill langPill" style="margin-left:auto;">
         <b id="lblLang">Lang</b>
@@ -143,8 +185,14 @@
 <script>
 (() => {
   // ======================
-  // Survive 60s — bilingual (EN/RU) + improved UI contrast
-  // Single-file HTML5 game (good for Yandex Games pipeline)
+  // Survive 60s — "more successful" version:
+  // ✅ Better UI contrast
+  // ✅ English + Russian with language switch
+  // ✅ Best score + coins + local leaderboard (top 10)
+  // ✅ Daily challenge (rotates daily, boosts retention)
+  // ✅ Light upgrades (speed/damage/hp) with caps (doesn't break balance)
+  // ✅ 4 enemy archetypes (tank, fast, splitter, dasher)
+  // ✅ Ad hooks kept as STUBS (safe to swap for Yandex SDK)
   // ======================
 
   // ---------- Language ----------
@@ -153,93 +201,266 @@
       hud_time: "Time",
       hud_score: "Score",
       hud_hp: "HP",
+      hud_coins: "Coins",
       hud_lang: "Lang",
 
       menu_title: "Survive 60 seconds",
       menu_text: "Move to dodge. You auto-attack nearby enemies.\nOne revive available after 40s.",
       menu_start: "Start",
       menu_how: "How to play",
+      menu_upgrades: "Upgrades",
+      menu_leaderboard: "Leaderboard",
       menu_controls: "Controls: WASD / Arrow keys • Mobile: drag to move • Restart: Space/Enter",
 
+      daily_title: "Daily Challenge",
+      daily_complete: "Daily reward claimed today.",
+      daily_claim: "Claim reward",
+      daily_reward: (n)=> `Reward: +${n} coins`,
+      daily_rule_speed: "+20% enemy speed",
+      daily_rule_score: "Fast enemies give +50% score",
+      daily_rule_fragile: "Start with 70 HP",
+      daily_rule_dense: "More spawns after 30s",
+
       how_title: "How to play",
-      how_text: "Goal: Survive 60 seconds.\nMove to dodge enemies.\nYou auto-attack the nearest enemy in range.\n\nDifficulty ramps hard after 45s — that’s the fun part.",
+      how_text:
+        "Goal: Survive 60 seconds.\n" +
+        "Move to dodge enemies.\n" +
+        "You auto-attack the nearest enemy in range.\n\n" +
+        "After 45 seconds the pressure spikes — that’s the fun part.",
       how_back: "Back",
-      how_tip: "Tip: keep moving in arcs, not straight lines.",
+      how_tip: "Tip: move in arcs, not straight lines.",
+
+      up_title: "Upgrades",
+      up_sub: "Small upgrades = more fun. Caps keep the game fair.",
+      up_speed: "Move Speed",
+      up_dmg: "Damage",
+      up_hp: "Max HP",
+      up_level: (lv, cap)=> `Level ${lv}/${cap}`,
+      up_buy: "Buy",
+      up_notenough: "Not enough coins",
+      up_reset: "Reset progress",
+      up_reset_confirm: "Reset all progress? (coins, upgrades, best score, leaderboard)",
+
+      lb_title: "Leaderboard (local)",
+      lb_empty: "No runs yet. Play once and you’ll appear here.",
+      lb_rank: "Rank",
+      lb_points: "Score",
+      lb_date: "Date",
+      lb_back: "Back",
 
       dead_title: (sec) => `You died at ${sec.toFixed(1)}s`,
       dead_text: "Revive once and continue? (Best value after 40s)",
       revive_yes: "Revive (Rewarded)",
       revive_no: "No thanks",
-      dead_tip: "Tip: dodge late waves — they spike hard after 45s.",
+      dead_tip: "Tip: late waves spike after 45s — keep moving.",
 
       end_win_title: "You survived 60s!",
       end_lose_title: "Run ended",
-      end_win_text: "Nice. Can you do it again with a higher score?",
-      end_lose_text: "One more try — the first 10 seconds are free learning.",
+      end_win_text: "Nice. Can you beat your best score?",
+      end_lose_text: "One more try — your brain adapts fast.",
       end_again: "Play again",
       end_menu: "Main menu",
       end_restart: "Restart instantly: Space / Enter",
+      end_best: (n)=> `Best: ${n}`,
+      end_earned: (n)=> `Coins earned: +${n}`,
 
       hint_start: "Survive 60s.\nRevive available after 40s.",
       hint_shield: "Shield active!",
+      hint_saved: "Saved!",
+      hint_daily: "Daily reward claimed!"
     },
     ru: {
       hud_time: "Время",
       hud_score: "Счёт",
       hud_hp: "HP",
+      hud_coins: "Монеты",
       hud_lang: "Язык",
 
       menu_title: "Выжить 60 секунд",
       menu_text: "Двигайся, чтобы уклоняться. Ты автоматически атакуешь ближайших врагов.\nОдин ревив доступен после 40 секунд.",
       menu_start: "Играть",
       menu_how: "Как играть",
+      menu_upgrades: "Улучшения",
+      menu_leaderboard: "Таблица",
       menu_controls: "Управление: WASD / Стрелки • Мобайл: тяни для движения • Рестарт: Space/Enter",
 
+      daily_title: "Ежедневное испытание",
+      daily_complete: "Ежедневная награда уже получена.",
+      daily_claim: "Забрать награду",
+      daily_reward: (n)=> `Награда: +${n} монет`,
+      daily_rule_speed: "+20% скорость врагов",
+      daily_rule_score: "Быстрые враги дают +50% очков",
+      daily_rule_fragile: "Старт с 70 HP",
+      daily_rule_dense: "Больше спавна после 30с",
+
       how_title: "Как играть",
-      how_text: "Цель: выжить 60 секунд.\nДвигайся, чтобы уклоняться от врагов.\nТы автоматически атакуешь ближайшего врага в радиусе.\n\nСложность резко растёт после 45 секунд — вот где кайф.",
+      how_text:
+        "Цель: выжить 60 секунд.\n" +
+        "Двигайся, чтобы уклоняться от врагов.\n" +
+        "Ты автоматически атакуешь ближайшего врага в радиусе.\n\n" +
+        "После 45 секунд давление резко растёт — вот где кайф.",
       how_back: "Назад",
       how_tip: "Совет: двигайся дугами, не по прямой.",
+
+      up_title: "Улучшения",
+      up_sub: "Небольшие улучшения = больше кайфа. Лимиты сохраняют баланс.",
+      up_speed: "Скорость",
+      up_dmg: "Урон",
+      up_hp: "Макс HP",
+      up_level: (lv, cap)=> `Уровень ${lv}/${cap}`,
+      up_buy: "Купить",
+      up_notenough: "Не хватает монет",
+      up_reset: "Сброс прогресса",
+      up_reset_confirm: "Сбросить всё? (монеты, улучшения, рекорд, таблица)",
+
+      lb_title: "Таблица (локально)",
+      lb_empty: "Пока нет результатов. Сыграй один раз — и появишься здесь.",
+      lb_rank: "Место",
+      lb_points: "Очки",
+      lb_date: "Дата",
+      lb_back: "Назад",
 
       dead_title: (sec) => `Ты погиб на ${sec.toFixed(1)}с`,
       dead_text: "Ревив один раз и продолжить? (Лучше всего после 40с)",
       revive_yes: "Ревив (Награда)",
       revive_no: "Не нужно",
-      dead_tip: "Совет: после 45с волны резко усиливаются.",
+      dead_tip: "Совет: после 45с волны усиливаются — двигайся постоянно.",
 
       end_win_title: "Ты выжил 60 секунд!",
       end_lose_title: "Забег окончен",
-      end_win_text: "Отлично. Сможешь повторить с большим счётом?",
-      end_lose_text: "Ещё раз — первые 10 секунд легко освоить.",
+      end_win_text: "Отлично. Сможешь побить рекорд?",
+      end_lose_text: "Ещё раз — мозг учится быстро.",
       end_again: "Ещё раз",
       end_menu: "Меню",
       end_restart: "Быстрый рестарт: Space / Enter",
+      end_best: (n)=> `Рекорд: ${n}`,
+      end_earned: (n)=> `Монеты: +${n}`,
 
       hint_start: "Выживи 60с.\nРевив доступен после 40с.",
       hint_shield: "Щит активен!",
+      hint_saved: "Сохранено!",
+      hint_daily: "Награда получена!"
     }
   };
 
   function detectLang() {
-    const saved = localStorage.getItem("survive60_lang");
+    const saved = localStorage.getItem("s60_lang");
     if (saved === "en" || saved === "ru") return saved;
     const nav = (navigator.language || "en").toLowerCase();
     return nav.startsWith("ru") ? "ru" : "en";
   }
-
   let lang = detectLang();
   const t = (key, ...args) => {
     const v = I18N[lang][key];
     return typeof v === "function" ? v(...args) : v;
   };
 
-  function setLang(newLang) {
-    if (newLang !== "en" && newLang !== "ru") return;
-    lang = newLang;
-    localStorage.setItem("survive60_lang", newLang);
-    applyHudText();
-    // Re-render current overlay with new language
-    if (state.mode === "menu") goMenu();
-    else if (state.mode === "dead" || state.mode === "win") showEndScreen(state.mode === "win");
+  // ---------- Storage ----------
+  const LS = {
+    COINS: "s60_coins",
+    BEST: "s60_best",
+    UP: "s60_upgrades",
+    LB: "s60_lb",
+    LANG: "s60_lang",
+    DAILY_DATE: "s60_daily_date",
+    DAILY_TYPE: "s60_daily_type",
+    DAILY_CLAIMED: "s60_daily_claimed",
+  };
+
+  function loadInt(key, def=0){
+    const v = parseInt(localStorage.getItem(key) || "", 10);
+    return Number.isFinite(v) ? v : def;
+  }
+  function saveInt(key, v){ localStorage.setItem(key, String(Math.max(0, Math.floor(v)))); }
+
+  function loadJSON(key, def){
+    try{
+      const s = localStorage.getItem(key);
+      if (!s) return def;
+      return JSON.parse(s);
+    }catch{ return def; }
+  }
+  function saveJSON(key, obj){ localStorage.setItem(key, JSON.stringify(obj)); }
+
+  // Upgrades (capped, small)
+  const UPGRADE_CAP = { speed: 4, dmg: 4, hp: 3 };
+  const UPGRADE_COST = {
+    speed: [120, 220, 360, 540],
+    dmg:   [140, 260, 420, 620],
+    hp:    [180, 320, 520]
+  };
+
+  function getUpgrades(){
+    const def = { speed:0, dmg:0, hp:0 };
+    const u = loadJSON(LS.UP, def);
+    return { speed: u.speed|0, dmg: u.dmg|0, hp: u.hp|0 };
+  }
+  function setUpgrades(u){ saveJSON(LS.UP, u); }
+
+  function getCoins(){ return loadInt(LS.COINS, 0); }
+  function setCoins(n){ saveInt(LS.COINS, n); }
+  function addCoins(n){ setCoins(getCoins() + n); }
+
+  function getBest(){ return loadInt(LS.BEST, 0); }
+  function setBest(n){ saveInt(LS.BEST, n); }
+
+  // Leaderboard: array of {score, dateISO}
+  function getLB(){ return loadJSON(LS.LB, []); }
+  function setLB(arr){ saveJSON(LS.LB, arr); }
+
+  function addToLB(score){
+    const arr = getLB();
+    const date = new Date();
+    const d = date.toISOString().slice(0,10);
+    arr.push({ score, date: d });
+    arr.sort((a,b)=> b.score - a.score);
+    const top = arr.slice(0, 10);
+    setLB(top);
+  }
+
+  // ---------- Daily Challenge ----------
+  // Types:
+  // 0: +20% enemy speed
+  // 1: fast enemies give +50% score
+  // 2: start with 70 HP
+  // 3: denser spawns after 30s
+  function todayKey(){
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const dd = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${dd}`;
+  }
+
+  function ensureDaily(){
+    const tk = todayKey();
+    const stored = localStorage.getItem(LS.DAILY_DATE);
+    if (stored !== tk){
+      localStorage.setItem(LS.DAILY_DATE, tk);
+      // rotate type deterministically by date
+      const seed = (tk.split("-").join(""));
+      const n = parseInt(seed, 10);
+      const type = Number.isFinite(n) ? (n % 4) : Math.floor(Math.random()*4);
+      localStorage.setItem(LS.DAILY_TYPE, String(type));
+      localStorage.setItem(LS.DAILY_CLAIMED, "0");
+    }
+  }
+  ensureDaily();
+
+  function getDailyType(){ return loadInt(LS.DAILY_TYPE, 0) % 4; }
+  function isDailyClaimed(){ return loadInt(LS.DAILY_CLAIMED, 0) === 1; }
+  function setDailyClaimed(){ localStorage.setItem(LS.DAILY_CLAIMED, "1"); }
+
+  function dailyRuleText(type){
+    if (type === 0) return t("daily_rule_speed");
+    if (type === 1) return t("daily_rule_score");
+    if (type === 2) return t("daily_rule_fragile");
+    return t("daily_rule_dense");
+  }
+
+  function dailyRewardAmount(){
+    // Simple fixed reward (can scale later)
+    return 200;
   }
 
   // ---------- DOM ----------
@@ -249,10 +470,12 @@
   const uiTime = document.getElementById('time');
   const uiScore = document.getElementById('score');
   const uiHp = document.getElementById('hp');
+  const uiCoins = document.getElementById('coins');
 
   const lblTime = document.getElementById('lblTime');
   const lblScore = document.getElementById('lblScore');
   const lblHp = document.getElementById('lblHp');
+  const lblCoins = document.getElementById('lblCoins');
   const lblLang = document.getElementById('lblLang');
 
   const btnEN = document.getElementById('langEN');
@@ -262,6 +485,16 @@
   const card = document.getElementById('card');
   const hint = document.getElementById('hint');
 
+  function setLang(newLang) {
+    if (newLang !== "en" && newLang !== "ru") return;
+    lang = newLang;
+    localStorage.setItem(LS.LANG, newLang);
+    applyHudText();
+    // Re-render overlay for current mode
+    if (state.mode === "menu") goMenu();
+    else if (state.mode === "dead" || state.mode === "win") showEndScreen(state.mode === "win");
+  }
+
   btnEN.addEventListener("click", () => setLang("en"));
   btnRU.addEventListener("click", () => setLang("ru"));
 
@@ -269,8 +502,8 @@
     lblTime.textContent = t("hud_time");
     lblScore.textContent = t("hud_score");
     lblHp.textContent = t("hud_hp");
+    lblCoins.textContent = t("hud_coins");
     lblLang.textContent = t("hud_lang");
-
     btnEN.classList.toggle("active", lang === "en");
     btnRU.classList.toggle("active", lang === "ru");
   }
@@ -318,7 +551,7 @@
 
   // ---------- Game State ----------
   const state = {
-    mode: 'menu', // menu | playing | dead | win
+    mode: 'menu', // menu | playing | dead | win | upgrades | leaderboard | how
     t: 0,
     timeLeft: 60,
     score: 0,
@@ -329,6 +562,7 @@
     usedRevive: false,
     canRevive: false,
     interstitialCounter: 0,
+    coinsEarnedThisRun: 0,
   };
 
   const world = {
@@ -356,16 +590,45 @@
   const particles = [];
   const floaters = [];
 
+  // Enemy archetypes:
+  // tank: bigger, more hp
+  // fast: small fast
+  // splitter: splits into 2 minis on death
+  // dasher: periodically dashes
+  const ENEMY_MAX = 140; // perf cap
+
+  function applyUpgradesToPlayer(){
+    const u = getUpgrades();
+    // Speed: +3% per level (cap 4) => up to +12%
+    const speedMul = 1 + 0.03 * u.speed;
+    // Damage: +2 per level (cap 4) => up to +8
+    const dmgAdd = 2 * u.dmg;
+    // HP: +10 per level (cap 3) => up to +30
+    const hpAdd = 10 * u.hp;
+
+    player.speed = 260 * speedMul;
+    player.atkDamage = 14 + dmgAdd;
+    player.maxHp = 100 + hpAdd;
+  }
+
   function resetEntities() {
     enemies.length = 0;
     bullets.length = 0;
     particles.length = 0;
     floaters.length = 0;
 
+    applyUpgradesToPlayer();
+
     player.x = world.cx();
     player.y = world.cy();
     player.vx = 0; player.vy = 0;
-    player.hp = player.maxHp;
+
+    // daily modifier
+    const dt = getDailyType();
+    let startHP = player.maxHp;
+    if (dt === 2) startHP = Math.min(startHP, 70); // "fragile"
+    player.hp = startHP;
+
     player.invuln = 1.2;
     player.atkCooldown = 0;
 
@@ -375,22 +638,39 @@
     state.shake = 0;
     state.usedRevive = false;
     state.canRevive = false;
+    state.coinsEarnedThisRun = 0;
   }
 
-  // ---------- Spawning / Difficulty ----------
+  // ---------- Difficulty ----------
   function difficultyCurve(tt) {
     const a = clamp(tt / 60, 0, 1);
     const spike = clamp((tt - 35) / 25, 0, 1);
-    const spawn = lerp(0.9, 2.2, a) + lerp(0, 2.0, spike);
-    const speedMul = lerp(0.9, 1.35, a) + lerp(0, 0.55, spike);
-    const fastChance = lerp(0.05, 0.25, a) + lerp(0, 0.20, spike);
-    return { spawn, speedMul, fastChance };
+
+    let spawn = lerp(0.9, 2.2, a) + lerp(0, 2.0, spike);
+
+    // daily type: dense spawns after 30s
+    if (getDailyType() === 3 && tt > 30) spawn *= 1.25;
+
+    let speedMul = lerp(0.9, 1.35, a) + lerp(0, 0.55, spike);
+
+    // daily type: +20% enemy speed
+    if (getDailyType() === 0) speedMul *= 1.20;
+
+    const fastChance = lerp(0.06, 0.24, a) + lerp(0, 0.18, spike);
+    const splitterChance = lerp(0.05, 0.16, a);
+    const dasherChance = lerp(0.04, 0.12, a);
+
+    return { spawn, speedMul, fastChance, splitterChance, dasherChance };
   }
 
   let spawnAccum = 0;
 
   function spawnEnemy(tt) {
-    const { speedMul, fastChance } = difficultyCurve(tt);
+    if (enemies.length >= ENEMY_MAX) return;
+
+    const { speedMul, fastChance, splitterChance, dasherChance } = difficultyCurve(tt);
+
+    // Spawn off-screen edges
     const margin = 60;
     const side = Math.floor(Math.random()*4);
     let x, y;
@@ -399,18 +679,52 @@
     if (side === 2) { x = rand(-margin, world.w()+margin); y = world.h()+margin; }
     if (side === 3) { x = -margin; y = rand(-margin, world.h()+margin); }
 
-    const fast = Math.random() < fastChance;
-    const r = fast ? 11 : 15;
-    const baseSpeed = fast ? 145 : 105;
-    const hp = fast ? 24 : 40;
+    // Choose type
+    const r = Math.random();
+    let type = "tank";
+    if (r < fastChance) type = "fast";
+    else if (r < fastChance + splitterChance) type = "splitter";
+    else if (r < fastChance + splitterChance + dasherChance) type = "dasher";
+
+    let radius, baseSpeed, hp, dmg, knockResist;
+
+    if (type === "fast"){
+      radius = 11; baseSpeed = 150; hp = 26; dmg = 10; knockResist = 0.6;
+    } else if (type === "splitter"){
+      radius = 14; baseSpeed = 120; hp = 46; dmg = 12; knockResist = 0.45;
+    } else if (type === "dasher"){
+      radius = 13; baseSpeed = 110; hp = 40; dmg = 13; knockResist = 0.5;
+    } else {
+      radius = 15; baseSpeed = 105; hp = 44; dmg = 14; knockResist = 0.3;
+    }
 
     enemies.push({
       x, y, vx: 0, vy: 0,
-      r, hp, maxHp: hp,
+      r: radius,
+      hp, maxHp: hp,
       speed: baseSpeed * speedMul,
-      dmg: fast ? 10 : 14,
-      knockResist: fast ? 0.6 : 0.3,
-      type: fast ? 'fast' : 'tank',
+      dmg,
+      knockResist,
+      type,
+
+      // dasher state
+      dashT: 0,
+      dashCD: rand(1.3, 2.2),
+      dashing: 0
+    });
+  }
+
+  function spawnMini(x, y, speedMul){
+    if (enemies.length >= ENEMY_MAX) return;
+    enemies.push({
+      x, y, vx: 0, vy: 0,
+      r: 9,
+      hp: 16, maxHp: 16,
+      speed: 165 * speedMul,
+      dmg: 8,
+      knockResist: 0.65,
+      type: "mini",
+      dashT: 0, dashCD: 999, dashing: 0
     });
   }
 
@@ -429,18 +743,14 @@
       });
     }
   }
-
   function addFloater(x, y, text) {
     floaters.push({ x, y, vy: -40, age: 0, life: 0.7, text });
   }
 
-  // ---------- Ads (stubs) ----------
-  async function showRewardedAdStub() {
-    return new Promise((resolve) => setTimeout(() => resolve(true), 450));
-  }
-  async function showInterstitialAdStub() {
-    return new Promise((resolve) => setTimeout(() => resolve(true), 350));
-  }
+  // ---------- Ads (STUBS) ----------
+  // Replace these with Yandex SDK calls later.
+  async function showRewardedAdStub() { return new Promise((resolve) => setTimeout(() => resolve(true), 450)); }
+  async function showInterstitialAdStub() { return new Promise((resolve) => setTimeout(() => resolve(true), 350)); }
 
   // ---------- Gameplay ----------
   function applyPlayerInput(dt) {
@@ -539,12 +849,34 @@
     }
   }
 
+  function scoreForKill(e){
+    // Base score
+    let s = 10;
+    if (e.type === "fast") s = 14;
+    if (e.type === "mini") s = 8;
+    if (e.type === "splitter") s = 12;
+    if (e.type === "dasher") s = 12;
+
+    // Daily: fast enemies give +50% score
+    if (getDailyType() === 1 && e.type === "fast") s = Math.round(s * 1.5);
+    return s;
+  }
+
   function updateEnemies(dt) {
+    // Need current speedMul for minis spawned by splitters (use current curve)
+    const { speedMul } = difficultyCurve(state.t);
+
     for (let i=enemies.length-1; i>=0; i--) {
       const e = enemies[i];
 
       if (e.hp <= 0) {
-        state.score += (e.type === 'fast') ? 14 : 10;
+        // Splitter spawns minis
+        if (e.type === "splitter") {
+          spawnMini(e.x + rand(-8, 8), e.y + rand(-8, 8), speedMul);
+          spawnMini(e.x + rand(-8, 8), e.y + rand(-8, 8), speedMul);
+        }
+
+        state.score += scoreForKill(e);
         addParticles(e.x, e.y, 18);
         enemies.splice(i, 1);
         continue;
@@ -554,18 +886,35 @@
       const dy = player.y - e.y;
       const len = Math.hypot(dx, dy) || 1;
 
-      const ax = (dx/len) * e.speed;
-      const ay = (dy/len) * e.speed;
+      let targetSpeed = e.speed;
+
+      // Dasher: periodic dash
+      if (e.type === "dasher") {
+        e.dashT += dt;
+        e.dashCD -= dt;
+        if (e.dashCD <= 0) {
+          e.dashing = 0.35;                 // dash duration
+          e.dashCD = rand(1.4, 2.2);        // cooldown
+          addParticles(e.x, e.y, 10);
+        }
+        if (e.dashing > 0) {
+          e.dashing -= dt;
+          targetSpeed *= 2.2;
+        }
+      }
+
+      const ax = (dx/len) * targetSpeed;
+      const ay = (dy/len) * targetSpeed;
 
       e.vx = lerp(e.vx, ax, 1 - Math.pow(0.002, dt));
       e.vy = lerp(e.vy, ay, 1 - Math.pow(0.002, dt));
-
       e.vx *= Math.pow(0.06, dt);
       e.vy *= Math.pow(0.06, dt);
 
       e.x += e.vx * dt;
       e.y += e.vy * dt;
 
+      // Hit player on contact
       const rr = (player.r + e.r) * (player.r + e.r);
       if (dist2(player.x, player.y, e.x, e.y) < rr) {
         if (player.invuln <= 0) {
@@ -636,12 +985,9 @@
     card.innerHTML = html;
     overlay.style.display = 'flex';
   }
-  function hideOverlay() {
-    overlay.style.display = 'none';
-  }
+  function hideOverlay() { overlay.style.display = 'none'; }
 
   function overlayLangButtonsInline() {
-    // small inline toggles for overlay (optional but convenient)
     const enActive = lang === "en" ? "active" : "";
     const ruActive = lang === "ru" ? "active" : "";
     return `
@@ -652,7 +998,6 @@
       </div>
     `;
   }
-
   function wireOverlayLangButtons() {
     const ovEN = document.getElementById("ovEN");
     const ovRU = document.getElementById("ovRU");
@@ -660,25 +1005,74 @@
     if (ovRU) ovRU.onclick = () => setLang("ru");
   }
 
+  function formatDate(d){ return d; }
+
+  // ---------- Screens ----------
   function goMenu() {
     state.mode = 'menu';
-    setHint('');
+    ensureDaily();
+
+    const best = getBest();
+    const coins = getCoins();
+    const dailyType = getDailyType();
+    const claimed = isDailyClaimed();
+    const reward = dailyRewardAmount();
+
     showOverlay(`
       ${overlayLangButtonsInline()}
       <h1>${t("menu_title")}</h1>
       <p>${t("menu_text")}</p>
-      <div class="btnRow">
-        <button id="startBtn2" type="button">${t("menu_start")}</button>
-        <button class="secondary" id="howBtn2" type="button">${t("menu_how")}</button>
+
+      <div class="grid2" style="margin: 10px 0 12px;">
+        <div class="panel">
+          <h2>${t("daily_title")}</h2>
+          <div class="row"><span>${dailyRuleText(dailyType)}</span><span class="small mono">${t("daily_reward", reward)}</span></div>
+          <div class="btnRow" style="margin-top:8px;">
+            <button id="claimDailyBtn" type="button" ${claimed ? "disabled" : ""}>${claimed ? t("daily_complete") : t("daily_claim")}</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Progress</h2>
+          <div class="row"><span><b>${t("hud_coins")}:</b></span><span class="mono">${coins}</span></div>
+          <div class="row"><span><b>${t("end_best", best)}</b></span><span class="small mono">Top10 local</span></div>
+          <div class="btnRow" style="margin-top:8px;">
+            <button class="secondary" id="openUpBtn" type="button">${t("menu_upgrades")}</button>
+            <button class="secondary" id="openLbBtn" type="button">${t("menu_leaderboard")}</button>
+          </div>
+        </div>
       </div>
+
+      <div class="btnRow">
+        <button id="startBtn" type="button">${t("menu_start")}</button>
+        <button class="secondary" id="howBtn" type="button">${t("menu_how")}</button>
+      </div>
+
       <p class="small" style="margin-top:10px;">${t("menu_controls")}</p>
     `);
+
     wireOverlayLangButtons();
-    document.getElementById('startBtn2').onclick = () => start();
-    document.getElementById('howBtn2').onclick = () => showHow();
+
+    document.getElementById("startBtn").onclick = () => start();
+    document.getElementById("howBtn").onclick = () => showHow();
+    document.getElementById("openUpBtn").onclick = () => showUpgrades();
+    document.getElementById("openLbBtn").onclick = () => showLeaderboard();
+
+    const claimBtn = document.getElementById("claimDailyBtn");
+    if (claimBtn && !claimed){
+      claimBtn.onclick = () => {
+        addCoins(reward);
+        setDailyClaimed();
+        uiCoins.textContent = String(getCoins());
+        setHint(t("hint_daily"));
+        setTimeout(() => setHint(""), 1200);
+        goMenu();
+      };
+    }
   }
 
   function showHow() {
+    state.mode = "how";
     showOverlay(`
       ${overlayLangButtonsInline()}
       <h1>${t("how_title")}</h1>
@@ -692,6 +1086,119 @@
     document.getElementById('backBtn').onclick = () => goMenu();
   }
 
+  function showUpgrades(){
+    state.mode = "upgrades";
+    const u = getUpgrades();
+    const coins = getCoins();
+
+    function upRow(key, label){
+      const cap = UPGRADE_CAP[key];
+      const lv = u[key];
+      const nextCost = lv < cap ? UPGRADE_COST[key][lv] : null;
+      const disabled = (lv >= cap) || (nextCost !== null && coins < nextCost);
+      const costText = lv >= cap ? "MAX" : `${nextCost} ${t("hud_coins")}`;
+      const btnText = lv >= cap ? "MAX" : t("up_buy");
+      return `
+        <div class="row">
+          <div>
+            <b>${label}</b>
+            <div class="small">${t("up_level", lv, cap)}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="small mono">${costText}</div>
+            <button id="buy_${key}" type="button" ${disabled ? "disabled" : ""}>${btnText}</button>
+          </div>
+        </div>
+      `;
+    }
+
+    showOverlay(`
+      ${overlayLangButtonsInline()}
+      <h1>${t("up_title")}</h1>
+      <p>${t("up_sub")}</p>
+
+      <div class="panel">
+        <h2>${t("hud_coins")}: <span class="mono">${coins}</span></h2>
+        ${upRow("speed", t("up_speed"))}
+        ${upRow("dmg", t("up_dmg"))}
+        ${upRow("hp", t("up_hp"))}
+      </div>
+
+      <div class="btnRow" style="margin-top:12px;">
+        <button class="secondary" id="upBack" type="button">${t("how_back")}</button>
+        <button class="danger" id="resetAll" type="button">${t("up_reset")}</button>
+      </div>
+
+      <p class="small" style="margin-top:10px;">
+        ${t("daily_title")}: ${dailyRuleText(getDailyType())}
+      </p>
+    `);
+
+    wireOverlayLangButtons();
+    document.getElementById("upBack").onclick = () => goMenu();
+
+    document.getElementById("resetAll").onclick = () => {
+      if (confirm(t("up_reset_confirm"))){
+        localStorage.removeItem(LS.COINS);
+        localStorage.removeItem(LS.BEST);
+        localStorage.removeItem(LS.UP);
+        localStorage.removeItem(LS.LB);
+        setHint(t("hint_saved"));
+        setTimeout(() => setHint(""), 900);
+        goMenu();
+      }
+    };
+
+    ["speed","dmg","hp"].forEach(key=>{
+      const btn = document.getElementById(`buy_${key}`);
+      if (!btn) return;
+      btn.onclick = () => {
+        const uu = getUpgrades();
+        const cap = UPGRADE_CAP[key];
+        if (uu[key] >= cap) return;
+        const cost = UPGRADE_COST[key][uu[key]];
+        const c = getCoins();
+        if (c < cost) return;
+        setCoins(c - cost);
+        uu[key] += 1;
+        setUpgrades(uu);
+        applyUpgradesToPlayer();
+        setHint(t("hint_saved"));
+        setTimeout(() => setHint(""), 900);
+        showUpgrades();
+      };
+    });
+  }
+
+  function showLeaderboard(){
+    state.mode = "leaderboard";
+    const lb = getLB();
+    const rows = lb.length
+      ? lb.map((r, idx)=>`
+          <div class="row">
+            <div class="mono"><b>#${idx+1}</b></div>
+            <div class="mono" style="margin-left:auto;"><b>${r.score}</b></div>
+            <div class="small mono" style="min-width:92px; text-align:right;">${formatDate(r.date)}</div>
+          </div>
+        `).join("")
+      : `<p class="small">${t("lb_empty")}</p>`;
+
+    showOverlay(`
+      ${overlayLangButtonsInline()}
+      <h1>${t("lb_title")}</h1>
+      <div class="panel">
+        <h2>${t("lb_rank")} • ${t("lb_points")} • ${t("lb_date")}</h2>
+        ${rows}
+      </div>
+      <div class="btnRow" style="margin-top:12px;">
+        <button class="secondary" id="lbBack" type="button">${t("lb_back")}</button>
+      </div>
+    `);
+    wireOverlayLangButtons();
+    document.getElementById("lbBack").onclick = () => goMenu();
+  }
+
+  // ---------- Run flow ----------
   function start() {
     resetEntities();
     spawnAccum = 0;
@@ -711,14 +1218,26 @@
 
   async function maybeShowInterstitial() {
     state.interstitialCounter++;
+    // show every ~3-5 runs
     const show = (state.interstitialCounter % 3 === 0) || (state.interstitialCounter % 5 === 0);
     if (show) await showInterstitialAdStub();
+  }
+
+  function computeCoinsEarned(win){
+    // Coins designed to reward “one more run” without being grindy.
+    // Base from score, plus win bonus.
+    const base = Math.floor(state.score / 6);     // 10 score ~ 1-2 coins
+    const timeBonus = Math.floor((60 - state.timeLeft) / 10) * 6; // small longevity reward
+    const winBonus = win ? 120 : 0;
+    // Daily dense/spd doesn't change rewards; keeps it fair.
+    return Math.max(5, base + timeBonus + winBonus);
   }
 
   async function endRun(win) {
     if (state.mode !== 'playing') return;
     state.mode = win ? 'win' : 'dead';
 
+    // Dead with revive option
     if (!win && state.canRevive) {
       const sec = Math.max(0, 60 - state.timeLeft);
       showOverlay(`
@@ -739,6 +1258,7 @@
           state.usedRevive = true;
           player.hp = Math.max(35, Math.floor(player.maxHp * 0.40));
           player.invuln = 2.2;
+          // soften pressure briefly
           enemies.splice(0, Math.floor(enemies.length * 0.35));
           addParticles(player.x, player.y, 40);
           hideOverlay();
@@ -757,27 +1277,53 @@
   }
 
   async function showEndScreen(win) {
+    // Earn coins once, when run truly ends
+    const earned = computeCoinsEarned(win);
+    state.coinsEarnedThisRun = earned;
+    addCoins(earned);
+
+    // update best & leaderboard
+    const best = getBest();
+    if (state.score > best) setBest(state.score);
+    addToLB(state.score);
+
     await maybeShowInterstitial();
+
     const title = win ? t("end_win_title") : t("end_lose_title");
     const subtitle = win ? t("end_win_text") : t("end_lose_text");
+    const newBest = getBest();
 
     showOverlay(`
       ${overlayLangButtonsInline()}
       <h1>${title}</h1>
       <p>${subtitle}</p>
-      <div class="pill" style="margin: 10px 0 12px; display:inline-flex;">
-        <b>${t("hud_score")}</b>&nbsp; ${state.score}
+
+      <div class="grid2" style="margin: 10px 0 12px;">
+        <div class="panel">
+          <h2>${t("hud_score")}</h2>
+          <div class="row"><span><b>${t("hud_score")}:</b></span><span class="mono"><b>${state.score}</b></span></div>
+          <div class="row"><span><b>${t("end_best", newBest)}</b></span><span class="small mono">Top10 local</span></div>
+        </div>
+        <div class="panel">
+          <h2>${t("hud_coins")}</h2>
+          <div class="row"><span><b>${t("hud_coins")}:</b></span><span class="mono"><b>${getCoins()}</b></span></div>
+          <div class="row"><span><b>${t("end_earned", earned)}</b></span><span class="small mono">${dailyRuleText(getDailyType())}</span></div>
+        </div>
       </div>
+
       <div class="btnRow">
         <button id="againBtn" type="button">${t("end_again")}</button>
         <button class="secondary" id="menuBtn" type="button">${t("end_menu")}</button>
+        <button class="secondary" id="openLbBtn2" type="button">${t("menu_leaderboard")}</button>
       </div>
+
       <p class="small" style="margin-top:10px;">${t("end_restart")}</p>
     `);
     wireOverlayLangButtons();
 
     document.getElementById('againBtn').onclick = () => restart();
     document.getElementById('menuBtn').onclick = () => goMenu();
+    document.getElementById('openLbBtn2').onclick = () => showLeaderboard();
   }
 
   // ---------- Rendering ----------
@@ -828,11 +1374,18 @@
 
     // enemies
     for (const e of enemies) {
-      ctx.fillStyle = (e.type === 'fast') ? '#ffdf6e' : '#ff6b8a';
+      let color = '#ff6b8a';
+      if (e.type === 'fast') color = '#ffdf6e';
+      if (e.type === 'mini') color = '#ffd3e0';
+      if (e.type === 'splitter') color = '#a6b7ff';
+      if (e.type === 'dasher') color = '#7bf2ff';
+
+      ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(e.x, e.y, e.r, 0, Math.PI*2);
       ctx.fill();
 
+      // hp ring
       ctx.globalAlpha = 0.35;
       ctx.strokeStyle = '#0b0e14';
       ctx.lineWidth = 4;
@@ -847,6 +1400,17 @@
       ctx.beginPath();
       ctx.arc(e.x, e.y, e.r+2, -Math.PI/2, -Math.PI/2 + hpT * Math.PI*2);
       ctx.stroke();
+
+      // dasher dash hint
+      if (e.type === "dasher" && e.dashing > 0) {
+        ctx.globalAlpha = 0.28;
+        ctx.strokeStyle = '#7bf2ff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r+6, 0, Math.PI*2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
     }
 
     // player
@@ -858,7 +1422,7 @@
     ctx.fill();
     ctx.globalAlpha = 1;
 
-    // attack range hint
+    // attack range hint near end
     if (state.mode === 'playing') {
       const tt = clamp((state.t - 42)/18, 0, 1);
       ctx.globalAlpha = 0.06 + 0.06 * tt;
@@ -872,7 +1436,7 @@
 
     // floaters
     ctx.fillStyle = 'rgba(233,238,252,.95)';
-    ctx.font = '700 13px system-ui';
+    ctx.font = '900 13px system-ui';
     for (const f of floaters) {
       const a = 1 - (f.age / f.life);
       ctx.globalAlpha = a;
@@ -902,6 +1466,7 @@
     uiTime.textContent = state.timeLeft.toFixed(1);
     uiScore.textContent = String(state.score);
     uiHp.textContent = String(Math.max(0, Math.floor(player.hp)));
+    uiCoins.textContent = String(getCoins());
 
     while (state.accumulator >= state.dtFixed) {
       state.accumulator -= state.dtFixed;
