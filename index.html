@@ -52,6 +52,7 @@
       pointer-events:none;
     }
 
+    /* ✅ KEY FIX: set default text color for everything inside overlay */
     .card {
       pointer-events:auto;
       width:min(720px, calc(100vw - 24px));
@@ -61,6 +62,7 @@
       border: 1px solid rgba(255,255,255,.14);
       backdrop-filter: blur(10px);
       box-shadow: 0 10px 40px rgba(0,0,0,.35);
+      color: rgba(255,255,255,.92); /* ✅ THIS fixes black text everywhere */
     }
 
     .card h1{
@@ -132,11 +134,14 @@
     @media (max-width: 680px){
       .grid2{ grid-template-columns: 1fr; }
     }
+
+    /* ✅ KEY FIX: make panels and rows explicitly white */
     .panel{
       padding: 12px 12px 10px;
       border-radius: 14px;
       background: rgba(0,0,0,.30);
       border: 1px solid rgba(255,255,255,.10);
+      color: rgba(255,255,255,.92); /* ✅ ensures no black text */
     }
     .panel h2{
       margin: 0 0 8px;
@@ -152,9 +157,14 @@
       align-items:center;
       padding: 8px 0;
       border-top: 1px solid rgba(255,255,255,.08);
+      color: rgba(255,255,255,.92); /* ✅ ensures row text stays bright */
     }
     .row:first-of-type{ border-top: 0; padding-top: 0; }
-    .row b{ font-weight: 950; }
+
+    /* ✅ KEY FIX: bold text and numbers always white */
+    .row b, .mono b { color:#ffffff; }
+    .row span { color: rgba(255,255,255,.92); }
+
     .mono{ font-variant-numeric: tabular-nums; }
   </style>
 </head>
@@ -185,14 +195,14 @@
 <script>
 (() => {
   // ======================
-  // Survive 60s — "more successful" version:
-  // ✅ Better UI contrast
+  // Survive 60s — improved version:
+  // ✅ Better UI contrast (fixed panels/rows black text bug)
   // ✅ English + Russian with language switch
   // ✅ Best score + coins + local leaderboard (top 10)
-  // ✅ Daily challenge (rotates daily, boosts retention)
-  // ✅ Light upgrades (speed/damage/hp) with caps (doesn't break balance)
+  // ✅ Daily challenge (rotates daily)
+  // ✅ Light upgrades (speed/damage/hp) with caps
   // ✅ 4 enemy archetypes (tank, fast, splitter, dasher)
-  // ✅ Ad hooks kept as STUBS (safe to swap for Yandex SDK)
+  // ✅ Ad hooks kept as STUBS
   // ======================
 
   // ---------- Language ----------
@@ -343,18 +353,6 @@
     }
   };
 
-  function detectLang() {
-    const saved = localStorage.getItem("s60_lang");
-    if (saved === "en" || saved === "ru") return saved;
-    const nav = (navigator.language || "en").toLowerCase();
-    return nav.startsWith("ru") ? "ru" : "en";
-  }
-  let lang = detectLang();
-  const t = (key, ...args) => {
-    const v = I18N[lang][key];
-    return typeof v === "function" ? v(...args) : v;
-  };
-
   // ---------- Storage ----------
   const LS = {
     COINS: "s60_coins",
@@ -365,6 +363,18 @@
     DAILY_DATE: "s60_daily_date",
     DAILY_TYPE: "s60_daily_type",
     DAILY_CLAIMED: "s60_daily_claimed",
+  };
+
+  function detectLang() {
+    const saved = localStorage.getItem(LS.LANG);
+    if (saved === "en" || saved === "ru") return saved;
+    const nav = (navigator.language || "en").toLowerCase();
+    return nav.startsWith("ru") ? "ru" : "en";
+  }
+  let lang = detectLang();
+  const t = (key, ...args) => {
+    const v = I18N[lang][key];
+    return typeof v === "function" ? v(...args) : v;
   };
 
   function loadInt(key, def=0){
@@ -382,7 +392,6 @@
   }
   function saveJSON(key, obj){ localStorage.setItem(key, JSON.stringify(obj)); }
 
-  // Upgrades (capped, small)
   const UPGRADE_CAP = { speed: 4, dmg: 4, hp: 3 };
   const UPGRADE_COST = {
     speed: [120, 220, 360, 540],
@@ -404,26 +413,18 @@
   function getBest(){ return loadInt(LS.BEST, 0); }
   function setBest(n){ saveInt(LS.BEST, n); }
 
-  // Leaderboard: array of {score, dateISO}
   function getLB(){ return loadJSON(LS.LB, []); }
   function setLB(arr){ saveJSON(LS.LB, arr); }
 
   function addToLB(score){
     const arr = getLB();
-    const date = new Date();
-    const d = date.toISOString().slice(0,10);
-    arr.push({ score, date: d });
+    const date = new Date().toISOString().slice(0,10);
+    arr.push({ score, date });
     arr.sort((a,b)=> b.score - a.score);
-    const top = arr.slice(0, 10);
-    setLB(top);
+    setLB(arr.slice(0, 10));
   }
 
   // ---------- Daily Challenge ----------
-  // Types:
-  // 0: +20% enemy speed
-  // 1: fast enemies give +50% score
-  // 2: start with 70 HP
-  // 3: denser spawns after 30s
   function todayKey(){
     const d = new Date();
     const y = d.getFullYear();
@@ -437,7 +438,6 @@
     const stored = localStorage.getItem(LS.DAILY_DATE);
     if (stored !== tk){
       localStorage.setItem(LS.DAILY_DATE, tk);
-      // rotate type deterministically by date
       const seed = (tk.split("-").join(""));
       const n = parseInt(seed, 10);
       const type = Number.isFinite(n) ? (n % 4) : Math.floor(Math.random()*4);
@@ -458,10 +458,7 @@
     return t("daily_rule_dense");
   }
 
-  function dailyRewardAmount(){
-    // Simple fixed reward (can scale later)
-    return 200;
-  }
+  function dailyRewardAmount(){ return 200; }
 
   // ---------- DOM ----------
   const canvas = document.getElementById('c');
@@ -490,9 +487,11 @@
     lang = newLang;
     localStorage.setItem(LS.LANG, newLang);
     applyHudText();
-    // Re-render overlay for current mode
     if (state.mode === "menu") goMenu();
     else if (state.mode === "dead" || state.mode === "win") showEndScreen(state.mode === "win");
+    else if (state.mode === "upgrades") showUpgrades();
+    else if (state.mode === "leaderboard") showLeaderboard();
+    else if (state.mode === "how") showHow();
   }
 
   btnEN.addEventListener("click", () => setLang("en"));
@@ -551,7 +550,7 @@
 
   // ---------- Game State ----------
   const state = {
-    mode: 'menu', // menu | playing | dead | win | upgrades | leaderboard | how
+    mode: 'menu',
     t: 0,
     timeLeft: 60,
     score: 0,
@@ -562,7 +561,6 @@
     usedRevive: false,
     canRevive: false,
     interstitialCounter: 0,
-    coinsEarnedThisRun: 0,
   };
 
   const world = {
@@ -590,20 +588,12 @@
   const particles = [];
   const floaters = [];
 
-  // Enemy archetypes:
-  // tank: bigger, more hp
-  // fast: small fast
-  // splitter: splits into 2 minis on death
-  // dasher: periodically dashes
-  const ENEMY_MAX = 140; // perf cap
+  const ENEMY_MAX = 140;
 
   function applyUpgradesToPlayer(){
     const u = getUpgrades();
-    // Speed: +3% per level (cap 4) => up to +12%
     const speedMul = 1 + 0.03 * u.speed;
-    // Damage: +2 per level (cap 4) => up to +8
     const dmgAdd = 2 * u.dmg;
-    // HP: +10 per level (cap 3) => up to +30
     const hpAdd = 10 * u.hp;
 
     player.speed = 260 * speedMul;
@@ -623,10 +613,9 @@
     player.y = world.cy();
     player.vx = 0; player.vy = 0;
 
-    // daily modifier
     const dt = getDailyType();
     let startHP = player.maxHp;
-    if (dt === 2) startHP = Math.min(startHP, 70); // "fragile"
+    if (dt === 2) startHP = Math.min(startHP, 70);
     player.hp = startHP;
 
     player.invuln = 1.2;
@@ -638,22 +627,16 @@
     state.shake = 0;
     state.usedRevive = false;
     state.canRevive = false;
-    state.coinsEarnedThisRun = 0;
   }
 
-  // ---------- Difficulty ----------
   function difficultyCurve(tt) {
     const a = clamp(tt / 60, 0, 1);
     const spike = clamp((tt - 35) / 25, 0, 1);
 
     let spawn = lerp(0.9, 2.2, a) + lerp(0, 2.0, spike);
-
-    // daily type: dense spawns after 30s
     if (getDailyType() === 3 && tt > 30) spawn *= 1.25;
 
     let speedMul = lerp(0.9, 1.35, a) + lerp(0, 0.55, spike);
-
-    // daily type: +20% enemy speed
     if (getDailyType() === 0) speedMul *= 1.20;
 
     const fastChance = lerp(0.06, 0.24, a) + lerp(0, 0.18, spike);
@@ -670,7 +653,6 @@
 
     const { speedMul, fastChance, splitterChance, dasherChance } = difficultyCurve(tt);
 
-    // Spawn off-screen edges
     const margin = 60;
     const side = Math.floor(Math.random()*4);
     let x, y;
@@ -679,7 +661,6 @@
     if (side === 2) { x = rand(-margin, world.w()+margin); y = world.h()+margin; }
     if (side === 3) { x = -margin; y = rand(-margin, world.h()+margin); }
 
-    // Choose type
     const r = Math.random();
     let type = "tank";
     if (r < fastChance) type = "fast";
@@ -706,9 +687,6 @@
       dmg,
       knockResist,
       type,
-
-      // dasher state
-      dashT: 0,
       dashCD: rand(1.3, 2.2),
       dashing: 0
     });
@@ -724,11 +702,10 @@
       dmg: 8,
       knockResist: 0.65,
       type: "mini",
-      dashT: 0, dashCD: 999, dashing: 0
+      dashCD: 999, dashing: 0
     });
   }
 
-  // ---------- Effects ----------
   function addParticles(x, y, count) {
     for (let i=0; i<count; i++) {
       const a = rand(0, Math.PI*2);
@@ -748,11 +725,9 @@
   }
 
   // ---------- Ads (STUBS) ----------
-  // Replace these with Yandex SDK calls later.
   async function showRewardedAdStub() { return new Promise((resolve) => setTimeout(() => resolve(true), 450)); }
   async function showInterstitialAdStub() { return new Promise((resolve) => setTimeout(() => resolve(true), 350)); }
 
-  // ---------- Gameplay ----------
   function applyPlayerInput(dt) {
     let ix = 0, iy = 0;
     if (keys.has('w') || keys.has('arrowup')) iy -= 1;
@@ -850,27 +825,22 @@
   }
 
   function scoreForKill(e){
-    // Base score
     let s = 10;
     if (e.type === "fast") s = 14;
     if (e.type === "mini") s = 8;
     if (e.type === "splitter") s = 12;
     if (e.type === "dasher") s = 12;
-
-    // Daily: fast enemies give +50% score
     if (getDailyType() === 1 && e.type === "fast") s = Math.round(s * 1.5);
     return s;
   }
 
   function updateEnemies(dt) {
-    // Need current speedMul for minis spawned by splitters (use current curve)
     const { speedMul } = difficultyCurve(state.t);
 
     for (let i=enemies.length-1; i>=0; i--) {
       const e = enemies[i];
 
       if (e.hp <= 0) {
-        // Splitter spawns minis
         if (e.type === "splitter") {
           spawnMini(e.x + rand(-8, 8), e.y + rand(-8, 8), speedMul);
           spawnMini(e.x + rand(-8, 8), e.y + rand(-8, 8), speedMul);
@@ -888,13 +858,11 @@
 
       let targetSpeed = e.speed;
 
-      // Dasher: periodic dash
       if (e.type === "dasher") {
-        e.dashT += dt;
         e.dashCD -= dt;
         if (e.dashCD <= 0) {
-          e.dashing = 0.35;                 // dash duration
-          e.dashCD = rand(1.4, 2.2);        // cooldown
+          e.dashing = 0.35;
+          e.dashCD = rand(1.4, 2.2);
           addParticles(e.x, e.y, 10);
         }
         if (e.dashing > 0) {
@@ -914,7 +882,6 @@
       e.x += e.vx * dt;
       e.y += e.vy * dt;
 
-      // Hit player on contact
       const rr = (player.r + e.r) * (player.r + e.r);
       if (dist2(player.x, player.y, e.x, e.y) < rr) {
         if (player.invuln <= 0) {
@@ -976,7 +943,6 @@
     else if (state.timeLeft <= 0) endRun(true);
   }
 
-  // ---------- UI helpers ----------
   function setHint(text) {
     hint.textContent = text;
     hint.style.display = text ? 'block' : 'none';
@@ -1034,7 +1000,7 @@
 
         <div class="panel">
           <h2>Progress</h2>
-          <div class="row"><span><b>${t("hud_coins")}:</b></span><span class="mono">${coins}</span></div>
+          <div class="row"><span><b>${t("hud_coins")}:</b></span><span class="mono"><b>${coins}</b></span></div>
           <div class="row"><span><b>${t("end_best", best)}</b></span><span class="small mono">Top10 local</span></div>
           <div class="btnRow" style="margin-top:8px;">
             <button class="secondary" id="openUpBtn" type="button">${t("menu_upgrades")}</button>
@@ -1118,7 +1084,7 @@
       <p>${t("up_sub")}</p>
 
       <div class="panel">
-        <h2>${t("hud_coins")}: <span class="mono">${coins}</span></h2>
+        <h2>${t("hud_coins")}: <span class="mono"><b>${coins}</b></span></h2>
         ${upRow("speed", t("up_speed"))}
         ${upRow("dmg", t("up_dmg"))}
         ${upRow("hp", t("up_hp"))}
@@ -1198,7 +1164,6 @@
     document.getElementById("lbBack").onclick = () => goMenu();
   }
 
-  // ---------- Run flow ----------
   function start() {
     resetEntities();
     spawnAccum = 0;
@@ -1218,18 +1183,14 @@
 
   async function maybeShowInterstitial() {
     state.interstitialCounter++;
-    // show every ~3-5 runs
     const show = (state.interstitialCounter % 3 === 0) || (state.interstitialCounter % 5 === 0);
     if (show) await showInterstitialAdStub();
   }
 
   function computeCoinsEarned(win){
-    // Coins designed to reward “one more run” without being grindy.
-    // Base from score, plus win bonus.
-    const base = Math.floor(state.score / 6);     // 10 score ~ 1-2 coins
-    const timeBonus = Math.floor((60 - state.timeLeft) / 10) * 6; // small longevity reward
+    const base = Math.floor(state.score / 6);
+    const timeBonus = Math.floor((60 - state.timeLeft) / 10) * 6;
     const winBonus = win ? 120 : 0;
-    // Daily dense/spd doesn't change rewards; keeps it fair.
     return Math.max(5, base + timeBonus + winBonus);
   }
 
@@ -1237,7 +1198,6 @@
     if (state.mode !== 'playing') return;
     state.mode = win ? 'win' : 'dead';
 
-    // Dead with revive option
     if (!win && state.canRevive) {
       const sec = Math.max(0, 60 - state.timeLeft);
       showOverlay(`
@@ -1258,7 +1218,6 @@
           state.usedRevive = true;
           player.hp = Math.max(35, Math.floor(player.maxHp * 0.40));
           player.invuln = 2.2;
-          // soften pressure briefly
           enemies.splice(0, Math.floor(enemies.length * 0.35));
           addParticles(player.x, player.y, 40);
           hideOverlay();
@@ -1277,14 +1236,10 @@
   }
 
   async function showEndScreen(win) {
-    // Earn coins once, when run truly ends
     const earned = computeCoinsEarned(win);
-    state.coinsEarnedThisRun = earned;
     addCoins(earned);
 
-    // update best & leaderboard
-    const best = getBest();
-    if (state.score > best) setBest(state.score);
+    if (state.score > getBest()) setBest(state.score);
     addToLB(state.score);
 
     await maybeShowInterstitial();
@@ -1340,7 +1295,6 @@
     ctx.fillStyle = '#0b0e14';
     ctx.fillRect(0, 0, w, h);
 
-    // subtle grid
     ctx.globalAlpha = 0.08;
     ctx.strokeStyle = '#cfe0ff';
     ctx.lineWidth = 1;
@@ -1351,7 +1305,6 @@
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    // particles
     for (const p of particles) {
       const tt = 1 - (p.age / p.life);
       ctx.globalAlpha = tt;
@@ -1362,7 +1315,6 @@
     }
     ctx.globalAlpha = 1;
 
-    // bullets
     for (const b of bullets) {
       ctx.strokeStyle = 'rgba(233,238,252,.85)';
       ctx.lineWidth = 3;
@@ -1372,7 +1324,6 @@
       ctx.stroke();
     }
 
-    // enemies
     for (const e of enemies) {
       let color = '#ff6b8a';
       if (e.type === 'fast') color = '#ffdf6e';
@@ -1385,7 +1336,6 @@
       ctx.arc(e.x, e.y, e.r, 0, Math.PI*2);
       ctx.fill();
 
-      // hp ring
       ctx.globalAlpha = 0.35;
       ctx.strokeStyle = '#0b0e14';
       ctx.lineWidth = 4;
@@ -1401,7 +1351,6 @@
       ctx.arc(e.x, e.y, e.r+2, -Math.PI/2, -Math.PI/2 + hpT * Math.PI*2);
       ctx.stroke();
 
-      // dasher dash hint
       if (e.type === "dasher" && e.dashing > 0) {
         ctx.globalAlpha = 0.28;
         ctx.strokeStyle = '#7bf2ff';
@@ -1413,7 +1362,6 @@
       }
     }
 
-    // player
     const inv = player.invuln > 0 ? 0.45 : 1;
     ctx.globalAlpha = inv;
     ctx.fillStyle = '#7cf0c3';
@@ -1422,7 +1370,6 @@
     ctx.fill();
     ctx.globalAlpha = 1;
 
-    // attack range hint near end
     if (state.mode === 'playing') {
       const tt = clamp((state.t - 42)/18, 0, 1);
       ctx.globalAlpha = 0.06 + 0.06 * tt;
@@ -1434,7 +1381,6 @@
       ctx.globalAlpha = 1;
     }
 
-    // floaters
     ctx.fillStyle = 'rgba(233,238,252,.95)';
     ctx.font = '900 13px system-ui';
     for (const f of floaters) {
@@ -1444,7 +1390,6 @@
     }
     ctx.globalAlpha = 1;
 
-    // danger vignette near end
     const nearEnd = clamp((state.t - 45) / 15, 0, 1);
     if (nearEnd > 0) {
       const grd = ctx.createRadialGradient(player.x, player.y, 60, player.x, player.y, Math.max(w,h));
@@ -1457,7 +1402,6 @@
     ctx.restore();
   }
 
-  // ---------- Main Loop ----------
   function frame(now) {
     const delta = Math.min(0.05, (now - state.lastNow) / 1000);
     state.lastNow = now;
