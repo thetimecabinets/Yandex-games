@@ -1,0 +1,808 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+  <title>Survive 60s (Yandex-ready MVP)</title>
+  <style>
+    html, body { margin:0; padding:0; height:100%; background:#0b0e14; overflow:hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    canvas { display:block; width:100vw; height:100vh; }
+    .hud {
+      position:fixed; inset:0; pointer-events:none; color:#e9eefc;
+      display:flex; flex-direction:column; padding:14px;
+      text-shadow: 0 1px 2px rgba(0,0,0,.65);
+    }
+    .top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+    .pill {
+      pointer-events:none;
+      display:inline-flex; gap:10px; align-items:center;
+      padding:10px 12px; border-radius:999px;
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.08);
+      backdrop-filter: blur(8px);
+    }
+    .pill b { font-weight:700; }
+    .centerOverlay {
+      position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+      pointer-events:none;
+    }
+    .card {
+      pointer-events:auto;
+      width:min(560px, calc(100vw - 24px));
+      padding:18px 18px 14px;
+      border-radius:16px;
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.10);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 10px 40px rgba(0,0,0,.35);
+    }
+    .card h1 { margin:0 0 8px; font-size:22px; }
+    .card p { margin:0 0 12px; color: rgba(233,238,252,.85); line-height:1.35; }
+    .btnRow { display:flex; gap:10px; flex-wrap:wrap; }
+    button {
+      pointer-events:auto;
+      appearance:none; border:0; border-radius:12px;
+      padding:10px 12px; font-weight:700; cursor:pointer;
+      background: #e9eefc; color:#0b0e14;
+    }
+    button.secondary { background: rgba(233,238,252,.14); color:#e9eefc; border:1px solid rgba(233,238,252,.18); }
+    button:active { transform: translateY(1px); }
+    .small { font-size:12px; opacity:.85; }
+    .hintBar {
+      position:fixed; left:50%; bottom:14px; transform:translateX(-50%);
+      padding:10px 12px; border-radius:999px;
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.08);
+      backdrop-filter: blur(8px);
+      pointer-events:none;
+      color: rgba(233,238,252,.92);
+      max-width: min(680px, calc(100vw - 24px));
+      text-align:center;
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div class="hud">
+  <div class="top">
+    <div class="pill"><b>Time</b> <span id="time">60.0</span>s</div>
+    <div class="pill"><b>Score</b> <span id="score">0</span></div>
+    <div class="pill"><b>HP</b> <span id="hp">100</span></div>
+  </div>
+</div>
+
+<div class="centerOverlay" id="overlay" style="display:flex;">
+  <div class="card" id="card">
+    <h1>Survive 60 seconds</h1>
+    <p>
+      Move to dodge. You auto-attack nearby enemies.<br/>
+      Survive the chaos near the end. One revive available after 40s.
+    </p>
+    <div class="btnRow">
+      <button id="startBtn">Start</button>
+      <button class="secondary" id="howBtn">How to play</button>
+    </div>
+    <p class="small" style="margin-top:10px;">
+      Controls: WASD / Arrow keys • Mobile: drag to move • Restart: Space/Enter
+    </p>
+  </div>
+</div>
+
+<div class="hintBar" id="hint" style="display:none;"></div>
+
+<script>
+(() => {
+  // ======================
+  // Professional MVP notes:
+  // - Fixed timestep update for consistent behavior
+  // - Mobile drag movement + keyboard
+  // - Clean separation: state, entities, rendering
+  // - Ad hooks (Yandex SDK) are stubbed; integrate later
+  // ======================
+
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  const uiTime = document.getElementById('time');
+  const uiScore = document.getElementById('score');
+  const uiHp = document.getElementById('hp');
+  const overlay = document.getElementById('overlay');
+  const card = document.getElementById('card');
+  const startBtn = document.getElementById('startBtn');
+  const howBtn = document.getElementById('howBtn');
+  const hint = document.getElementById('hint');
+
+  function resize() {
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------- Utils ----------
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const dist2 = (ax, ay, bx, by) => {
+    const dx = ax - bx, dy = ay - by;
+    return dx*dx + dy*dy;
+  };
+
+  // ---------- Input ----------
+  const keys = new Set();
+  window.addEventListener('keydown', (e) => {
+    keys.add(e.key.toLowerCase());
+    if ((e.key === ' ' || e.key === 'Enter') && (state.mode === 'dead' || state.mode === 'win')) {
+      restart();
+    }
+  });
+  window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+
+  let touchActive = false;
+  let touchStart = { x: 0, y: 0 };
+  let touchPos = { x: 0, y: 0 };
+  window.addEventListener('pointerdown', (e) => {
+    touchActive = true;
+    touchStart = { x: e.clientX, y: e.clientY };
+    touchPos = { x: e.clientX, y: e.clientY };
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!touchActive) return;
+    touchPos = { x: e.clientX, y: e.clientY };
+  });
+  window.addEventListener('pointerup', () => { touchActive = false; });
+
+  // ---------- Game State ----------
+  const state = {
+    mode: 'menu', // menu | playing | dead | win
+    t: 0,
+    timeLeft: 60,
+    score: 0,
+    shake: 0,
+    shakeX: 0, shakeY: 0,
+    lastNow: performance.now(),
+    accumulator: 0,
+    dtFixed: 1/120,
+    usedRevive: false,
+    canRevive: false,
+    interstitialCounter: 0, // simulate "every 2-3 runs"
+  };
+
+  const world = {
+    w: () => window.innerWidth,
+    h: () => window.innerHeight,
+    cx: () => window.innerWidth / 2,
+    cy: () => window.innerHeight / 2,
+  };
+
+  const player = {
+    x: 0, y: 0,
+    vx: 0, vy: 0,
+    r: 14,
+    hp: 100, maxHp: 100,
+    speed: 260,
+    invuln: 0,
+    atkCooldown: 0,
+    atkRate: 0.18, // seconds
+    atkRange: 110,
+    atkDamage: 14,
+  };
+
+  const enemies = [];
+  const bullets = []; // very short-lived "slashes"
+  const particles = [];
+  const floaters = [];
+
+  function resetEntities() {
+    enemies.length = 0;
+    bullets.length = 0;
+    particles.length = 0;
+    floaters.length = 0;
+
+    player.x = world.cx();
+    player.y = world.cy();
+    player.vx = 0; player.vy = 0;
+    player.hp = player.maxHp;
+    player.invuln = 1.2; // brief start safety
+    player.atkCooldown = 0;
+
+    state.t = 0;
+    state.timeLeft = 60;
+    state.score = 0;
+    state.shake = 0;
+    state.usedRevive = false;
+    state.canRevive = false;
+  }
+
+  // ---------- Spawning / Difficulty ----------
+  function difficultyCurve(t) {
+    // t = seconds elapsed (0..60)
+    // Slow ramp then sharp ramp after ~35s to create "near win deaths".
+    const a = clamp(t / 60, 0, 1);
+    const spike = clamp((t - 35) / 25, 0, 1); // 0 until 35s
+    // spawn rate in enemies/sec
+    const spawn = lerp(0.9, 2.2, a) + lerp(0, 2.0, spike);
+    // enemy speed multiplier
+    const speedMul = lerp(0.9, 1.35, a) + lerp(0, 0.55, spike);
+    // chance of fast enemy
+    const fastChance = lerp(0.05, 0.25, a) + lerp(0, 0.20, spike);
+    return { spawn, speedMul, fastChance };
+  }
+
+  let spawnAccum = 0;
+
+  function spawnEnemy(t) {
+    const { speedMul, fastChance } = difficultyCurve(t);
+
+    // Spawn off-screen around the edges
+    const margin = 60;
+    const side = Math.floor(Math.random()*4);
+    let x, y;
+    if (side === 0) { x = rand(-margin, world.w()+margin); y = -margin; }
+    if (side === 1) { x = world.w()+margin; y = rand(-margin, world.h()+margin); }
+    if (side === 2) { x = rand(-margin, world.w()+margin); y = world.h()+margin; }
+    if (side === 3) { x = -margin; y = rand(-margin, world.h()+margin); }
+
+    const fast = Math.random() < fastChance;
+    const r = fast ? 11 : 15;
+    const baseSpeed = fast ? 145 : 105;
+    const hp = fast ? 24 : 40;
+
+    enemies.push({
+      x, y,
+      vx: 0, vy: 0,
+      r,
+      hp,
+      maxHp: hp,
+      speed: baseSpeed * speedMul,
+      dmg: fast ? 10 : 14,
+      knockResist: fast ? 0.6 : 0.3,
+      type: fast ? 'fast' : 'tank',
+    });
+  }
+
+  // ---------- Effects ----------
+  function addParticles(x, y, count) {
+    for (let i=0; i<count; i++) {
+      const a = rand(0, Math.PI*2);
+      const s = rand(40, 220);
+      particles.push({
+        x, y,
+        vx: Math.cos(a)*s,
+        vy: Math.sin(a)*s,
+        life: rand(0.18, 0.45),
+        age: 0,
+        r: rand(1.2, 2.6),
+      });
+    }
+  }
+
+  function addFloater(x, y, text) {
+    floaters.push({ x, y, vy: -40, age: 0, life: 0.7, text });
+  }
+
+  // ---------- Ads (stubs) ----------
+  async function showRewardedAdStub() {
+    // In Yandex Games, you'd call the SDK:
+    // ysdk.adv.showRewardedVideo({ callbacks: { onRewarded: ..., onClose: ... } })
+    // Here, we simulate success.
+    return new Promise((resolve) => setTimeout(() => resolve(true), 450));
+  }
+
+  async function showInterstitialAdStub() {
+    // In Yandex Games:
+    // ysdk.adv.showFullscreenAdv({ callbacks: { onClose: ... } })
+    return new Promise((resolve) => setTimeout(() => resolve(true), 350));
+  }
+
+  // ---------- Gameplay ----------
+  function applyPlayerInput(dt) {
+    let ix = 0, iy = 0;
+
+    if (keys.has('w') || keys.has('arrowup')) iy -= 1;
+    if (keys.has('s') || keys.has('arrowdown')) iy += 1;
+    if (keys.has('a') || keys.has('arrowleft')) ix -= 1;
+    if (keys.has('d') || keys.has('arrowright')) ix += 1;
+
+    // mobile drag: direction from touch start to current
+    if (touchActive) {
+      const dx = touchPos.x - touchStart.x;
+      const dy = touchPos.y - touchStart.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 8) {
+        ix = dx / len;
+        iy = dy / len;
+      }
+    }
+
+    const len = Math.hypot(ix, iy) || 1;
+    ix /= len; iy /= len;
+
+    // Smooth acceleration
+    const targetVx = ix * player.speed;
+    const targetVy = iy * player.speed;
+    player.vx = lerp(player.vx, targetVx, 1 - Math.pow(0.001, dt));
+    player.vy = lerp(player.vy, targetVy, 1 - Math.pow(0.001, dt));
+
+    player.x += player.vx * dt;
+    player.y += player.vy * dt;
+
+    // Keep in bounds with soft clamp
+    player.x = clamp(player.x, player.r, world.w() - player.r);
+    player.y = clamp(player.y, player.r, world.h() - player.r);
+  }
+
+  function autoAttack(dt) {
+    player.atkCooldown -= dt;
+    if (player.atkCooldown > 0) return;
+
+    // Find nearest enemy in range
+    let best = -1;
+    let bestD = Infinity;
+    const range2 = player.atkRange * player.atkRange;
+
+    for (let i=0; i<enemies.length; i++) {
+      const e = enemies[i];
+      const d = dist2(player.x, player.y, e.x, e.y);
+      if (d < range2 && d < bestD) {
+        bestD = d; best = i;
+      }
+    }
+
+    if (best === -1) return;
+
+    const e = enemies[best];
+    player.atkCooldown = player.atkRate;
+
+    // Create a quick "slash" bullet that hits instantly
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    const len = Math.hypot(dx, dy) || 1;
+
+    bullets.push({
+      x: player.x + (dx/len) * (player.r + 6),
+      y: player.y + (dy/len) * (player.r + 6),
+      vx: (dx/len) * 900,
+      vy: (dy/len) * 900,
+      life: 0.06,
+      age: 0,
+      dmg: player.atkDamage,
+      pierce: false,
+    });
+  }
+
+  function updateBullets(dt) {
+    for (let i=bullets.length-1; i>=0; i--) {
+      const b = bullets[i];
+      b.age += dt;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+
+      // Collision with enemies
+      for (let j=enemies.length-1; j>=0; j--) {
+        const e = enemies[j];
+        const rr = (e.r + 6) * (e.r + 6);
+        if (dist2(b.x, b.y, e.x, e.y) < rr) {
+          e.hp -= b.dmg;
+          addParticles(b.x, b.y, 10);
+          addFloater(e.x, e.y - 10, `-${b.dmg}`);
+          // knockback
+          const dx = e.x - player.x;
+          const dy = e.y - player.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const kb = 220 * (1 - e.knockResist);
+          e.vx += (dx/len) * kb;
+          e.vy += (dy/len) * kb;
+
+          state.shake = Math.min(8, state.shake + 2.5);
+
+          // remove bullet
+          bullets.splice(i, 1);
+          break;
+        }
+      }
+
+      if (i < bullets.length) { // still exists
+        if (b.age >= b.life) bullets.splice(i, 1);
+      }
+    }
+  }
+
+  function updateEnemies(dt) {
+    for (let i=enemies.length-1; i>=0; i--) {
+      const e = enemies[i];
+
+      // Die
+      if (e.hp <= 0) {
+        state.score += (e.type === 'fast') ? 14 : 10;
+        addParticles(e.x, e.y, 18);
+        enemies.splice(i, 1);
+        continue;
+      }
+
+      // Move towards player + friction on velocity
+      const dx = player.x - e.x;
+      const dy = player.y - e.y;
+      const len = Math.hypot(dx, dy) || 1;
+
+      const ax = (dx/len) * e.speed;
+      const ay = (dy/len) * e.speed;
+
+      // blend steering with current velocity (gives "weight")
+      e.vx = lerp(e.vx, ax, 1 - Math.pow(0.002, dt));
+      e.vy = lerp(e.vy, ay, 1 - Math.pow(0.002, dt));
+
+      // extra damping (for knockback settle)
+      e.vx *= Math.pow(0.06, dt);
+      e.vy *= Math.pow(0.06, dt);
+
+      e.x += e.vx * dt;
+      e.y += e.vy * dt;
+
+      // Attack player on contact
+      const rr = (player.r + e.r) * (player.r + e.r);
+      if (dist2(player.x, player.y, e.x, e.y) < rr) {
+        if (player.invuln <= 0) {
+          player.hp -= e.dmg;
+          player.invuln = 0.35;
+          state.shake = Math.min(12, state.shake + 6);
+          addParticles(player.x, player.y, 22);
+          addFloater(player.x, player.y - 16, `-${e.dmg}`);
+          // push away
+          const px = (player.x - e.x);
+          const py = (player.y - e.y);
+          const plen = Math.hypot(px, py) || 1;
+          player.x += (px/plen) * 10;
+          player.y += (py/plen) * 10;
+        }
+      }
+    }
+  }
+
+  function updateParticles(dt) {
+    for (let i=particles.length-1; i>=0; i--) {
+      const p = particles[i];
+      p.age += dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx *= Math.pow(0.08, dt);
+      p.vy *= Math.pow(0.08, dt);
+      if (p.age >= p.life) particles.splice(i, 1);
+    }
+    for (let i=floaters.length-1; i>=0; i--) {
+      const f = floaters[i];
+      f.age += dt;
+      f.y += f.vy * dt;
+      if (f.age >= f.life) floaters.splice(i, 1);
+    }
+  }
+
+  function updateGame(dt) {
+    state.t += dt;
+    state.timeLeft = Math.max(0, 60 - state.t);
+
+    // Allow revive only after 40s, only if not used
+    state.canRevive = (!state.usedRevive && state.t >= 40);
+
+    // Spawn
+    const { spawn } = difficultyCurve(state.t);
+    spawnAccum += spawn * dt;
+    while (spawnAccum >= 1) {
+      spawnAccum -= 1;
+      spawnEnemy(state.t);
+    }
+
+    // Update
+    if (player.invuln > 0) player.invuln -= dt;
+
+    applyPlayerInput(dt);
+    autoAttack(dt);
+    updateBullets(dt);
+    updateEnemies(dt);
+    updateParticles(dt);
+
+    // Win/Lose
+    if (player.hp <= 0) {
+      player.hp = 0;
+      endRun(false);
+    } else if (state.timeLeft <= 0) {
+      endRun(true);
+    }
+  }
+
+  // ---------- End / UI ----------
+  function setHint(text) {
+    hint.textContent = text;
+    hint.style.display = text ? 'block' : 'none';
+  }
+
+  function showOverlay(html) {
+    card.innerHTML = html;
+    overlay.style.display = 'flex';
+  }
+  function hideOverlay() {
+    overlay.style.display = 'none';
+  }
+
+  async function endRun(win) {
+    if (state.mode !== 'playing') return;
+    state.mode = win ? 'win' : 'dead';
+
+    // If dead and revive available, present revive choice (ideal rewarded ad)
+    if (!win && state.canRevive) {
+      showOverlay(`
+        <h1>You died at ${Math.max(0, 60 - state.timeLeft).toFixed(1)}s</h1>
+        <p>Revive once and continue? (Best value after 40s)</p>
+        <div class="btnRow">
+          <button id="reviveBtn">Revive (Rewarded)</button>
+          <button class="secondary" id="noBtn">No thanks</button>
+        </div>
+        <p class="small" style="margin-top:10px;">Tip: dodge late waves — they spike hard after 45s.</p>
+      `);
+
+      document.getElementById('reviveBtn').onclick = async () => {
+        // pause logic implicitly via overlay; now show ad
+        const ok = await showRewardedAdStub();
+        if (ok) {
+          state.usedRevive = true;
+          player.hp = Math.max(35, Math.floor(player.maxHp * 0.40));
+          player.invuln = 2.2; // shield
+          // soften pressure briefly
+          // remove some enemies to feel "saved"
+          enemies.splice(0, Math.floor(enemies.length * 0.35));
+          addParticles(player.x, player.y, 40);
+          hideOverlay();
+          state.mode = 'playing';
+          setHint('Shield active!');
+          setTimeout(() => setHint(''), 1200);
+        } else {
+          // if ad fails, just continue end screen
+          showEndScreen(win);
+        }
+      };
+
+      document.getElementById('noBtn').onclick = () => showEndScreen(win);
+      return;
+    }
+
+    showEndScreen(win);
+  }
+
+  async function maybeShowInterstitial() {
+    // Strategy: show interstitial every ~2 runs, but never back-to-back harshly.
+    state.interstitialCounter++;
+    const show = (state.interstitialCounter % 3 === 0) || (state.interstitialCounter % 5 === 0);
+    if (show) await showInterstitialAdStub();
+  }
+
+  async function showEndScreen(win) {
+    // interstitial at run end only (best practice)
+    await maybeShowInterstitial();
+
+    const title = win ? 'You survived 60s!' : 'Run ended';
+    const subtitle = win
+      ? 'Nice. Can you do it again with a higher score?'
+      : 'One more try — the first 10 seconds are free learning.';
+    showOverlay(`
+      <h1>${title}</h1>
+      <p>${subtitle}</p>
+      <div class="pill" style="margin: 10px 0 12px; display:inline-flex;">
+        <b>Score</b>&nbsp; ${state.score}
+      </div>
+      <div class="btnRow">
+        <button id="againBtn">Play again</button>
+        <button class="secondary" id="menuBtn">Main menu</button>
+      </div>
+      <p class="small" style="margin-top:10px;">Restart instantly: Space / Enter</p>
+    `);
+
+    document.getElementById('againBtn').onclick = () => restart();
+    document.getElementById('menuBtn').onclick = () => goMenu();
+  }
+
+  function goMenu() {
+    state.mode = 'menu';
+    setHint('');
+    showOverlay(`
+      <h1>Survive 60 seconds</h1>
+      <p>Move to dodge. You auto-attack nearby enemies.<br/>One revive available after 40s.</p>
+      <div class="btnRow">
+        <button id="startBtn2">Start</button>
+        <button class="secondary" id="howBtn2">How to play</button>
+      </div>
+      <p class="small" style="margin-top:10px;">
+        Controls: WASD / Arrow keys • Mobile: drag to move • Restart: Space/Enter
+      </p>
+    `);
+    document.getElementById('startBtn2').onclick = () => start();
+    document.getElementById('howBtn2').onclick = () => showHow();
+  }
+
+  function showHow() {
+    showOverlay(`
+      <h1>How to play</h1>
+      <p>
+        <b>Goal:</b> Survive 60 seconds.<br/>
+        <b>Controls:</b> WASD/Arrows or drag on mobile.<br/>
+        <b>Combat:</b> You auto-attack the nearest enemy in range.<br/><br/>
+        Difficulty ramps hard after 45s — that’s the fun part.
+      </p>
+      <div class="btnRow">
+        <button id="backBtn">Back</button>
+      </div>
+      <p class="small" style="margin-top:10px;">Tip: keep moving in arcs, not straight lines.</p>
+    `);
+    document.getElementById('backBtn').onclick = () => goMenu();
+  }
+
+  function start() {
+    resetEntities();
+    spawnAccum = 0;
+    state.mode = 'playing';
+    hideOverlay();
+    setHint('Survive 60s. Revive available after 40s.');
+    setTimeout(() => setHint(''), 1800);
+  }
+
+  function restart() {
+    resetEntities();
+    spawnAccum = 0;
+    state.mode = 'playing';
+    hideOverlay();
+    setHint('');
+  }
+
+  startBtn.onclick = () => start();
+  howBtn.onclick = () => showHow();
+
+  // ---------- Rendering ----------
+  function render() {
+    const w = window.innerWidth, h = window.innerHeight;
+
+    // screen shake (small, readable)
+    state.shake = Math.max(0, state.shake - 20 * state.dtFixed);
+    const sx = (Math.random()*2 - 1) * state.shake;
+    const sy = (Math.random()*2 - 1) * state.shake;
+
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    // background
+    ctx.fillStyle = '#0b0e14';
+    ctx.fillRect(0, 0, w, h);
+
+    // subtle grid (helps motion perception)
+    ctx.globalAlpha = 0.08;
+    ctx.strokeStyle = '#cfe0ff';
+    ctx.lineWidth = 1;
+    const grid = 48;
+    ctx.beginPath();
+    for (let x = 0; x < w; x += grid) { ctx.moveTo(x, 0); ctx.lineTo(x, h); }
+    for (let y = 0; y < h; y += grid) { ctx.moveTo(0, y); ctx.lineTo(w, y); }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // particles
+    for (const p of particles) {
+      const t = 1 - (p.age / p.life);
+      ctx.globalAlpha = t;
+      ctx.fillStyle = '#e9eefc';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // bullets (slashes)
+    for (const b of bullets) {
+      ctx.strokeStyle = 'rgba(233,238,252,.85)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(b.x - b.vx*0.012, b.y - b.vy*0.012);
+      ctx.stroke();
+    }
+
+    // enemies
+    for (const e of enemies) {
+      // body
+      ctx.fillStyle = (e.type === 'fast') ? '#ffdf6e' : '#ff6b8a';
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.r, 0, Math.PI*2);
+      ctx.fill();
+
+      // hp ring (tiny)
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = '#0b0e14';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.r+2, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      const hpT = clamp(e.hp / e.maxHp, 0, 1);
+      ctx.strokeStyle = 'rgba(233,238,252,.75)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.r+2, -Math.PI/2, -Math.PI/2 + hpT * Math.PI*2);
+      ctx.stroke();
+    }
+
+    // player
+    const inv = player.invuln > 0 ? 0.45 : 1;
+    ctx.globalAlpha = inv;
+    ctx.fillStyle = '#7cf0c3';
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // attack range hint (subtle at low time, stronger near end)
+    if (state.mode === 'playing') {
+      const t = clamp((state.t - 42)/18, 0, 1);
+      ctx.globalAlpha = 0.06 + 0.06 * t;
+      ctx.strokeStyle = '#7cf0c3';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.atkRange, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // floaters
+    ctx.fillStyle = 'rgba(233,238,252,.95)';
+    ctx.font = '700 13px system-ui';
+    for (const f of floaters) {
+      const a = 1 - (f.age / f.life);
+      ctx.globalAlpha = a;
+      ctx.fillText(f.text, f.x + 10, f.y);
+    }
+    ctx.globalAlpha = 1;
+
+    // danger vignette near end
+    const nearEnd = clamp((state.t - 45) / 15, 0, 1);
+    if (nearEnd > 0) {
+      const grd = ctx.createRadialGradient(player.x, player.y, 60, player.x, player.y, Math.max(w,h));
+      grd.addColorStop(0, 'rgba(0,0,0,0)');
+      grd.addColorStop(1, `rgba(255,64,96,${0.12 * nearEnd})`);
+      ctx.fillStyle = grd;
+      ctx.fillRect(0,0,w,h);
+    }
+
+    ctx.restore();
+  }
+
+  // ---------- Main Loop (fixed timestep) ----------
+  function frame(now) {
+    const delta = Math.min(0.05, (now - state.lastNow) / 1000);
+    state.lastNow = now;
+    state.accumulator += delta;
+
+    // update UI always
+    uiTime.textContent = state.timeLeft.toFixed(1);
+    uiScore.textContent = String(state.score);
+    uiHp.textContent = String(Math.max(0, Math.floor(player.hp)));
+
+    while (state.accumulator >= state.dtFixed) {
+      state.accumulator -= state.dtFixed;
+
+      if (state.mode === 'playing') {
+        updateGame(state.dtFixed);
+      }
+    }
+
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  // boot
+  resetEntities();
+  requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
