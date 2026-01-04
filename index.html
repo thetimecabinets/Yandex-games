@@ -3,115 +3,278 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
-  <title>Survive 60s (Yandex-ready MVP)</title>
+  <title>Survive 60s</title>
   <style>
     html, body { margin:0; padding:0; height:100%; background:#0b0e14; overflow:hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
     canvas { display:block; width:100vw; height:100vh; }
+
     .hud {
-      position:fixed; inset:0; pointer-events:none; color:#e9eefc;
+      position:fixed; inset:0; pointer-events:none; color:#ffffff;
       display:flex; flex-direction:column; padding:14px;
-      text-shadow: 0 1px 2px rgba(0,0,0,.65);
+      text-shadow: 0 2px 6px rgba(0,0,0,.85);
     }
-    .top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
-    .pill {
+    .top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; }
+
+    .pill{
       pointer-events:none;
       display:inline-flex; gap:10px; align-items:center;
       padding:10px 12px; border-radius:999px;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.08);
-      backdrop-filter: blur(8px);
+      background: rgba(0,0,0,.45);
+      border: 1px solid rgba(255,255,255,.18);
+      backdrop-filter: blur(10px);
     }
-    .pill b { font-weight:700; }
+    .pill b { font-weight:800; color:#ffffff; letter-spacing:.2px; }
+    .pill span { color: rgba(255,255,255,.95); }
+
+    .langPill{
+      pointer-events:auto; /* clickable */
+      cursor: default;
+      user-select:none;
+    }
+    .langBtn{
+      pointer-events:auto;
+      cursor:pointer;
+      appearance:none;
+      border:1px solid rgba(255,255,255,.22);
+      background: rgba(255,255,255,.10);
+      color:#ffffff;
+      padding:6px 10px;
+      border-radius:999px;
+      font-weight:800;
+    }
+    .langBtn.active{
+      background:#ffffff;
+      color:#0b0e14;
+      border-color: rgba(255,255,255,.35);
+    }
+
     .centerOverlay {
       position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
       pointer-events:none;
     }
+
     .card {
       pointer-events:auto;
-      width:min(560px, calc(100vw - 24px));
+      width:min(620px, calc(100vw - 24px));
       padding:18px 18px 14px;
       border-radius:16px;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(20,22,28,.85);
+      border: 1px solid rgba(255,255,255,.14);
       backdrop-filter: blur(10px);
       box-shadow: 0 10px 40px rgba(0,0,0,.35);
     }
-    .card h1 { margin:0 0 8px; font-size:22px; }
-    .card p { margin:0 0 12px; color: rgba(233,238,252,.85); line-height:1.35; }
-    .btnRow { display:flex; gap:10px; flex-wrap:wrap; }
+
+    .card h1{
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 900;
+      color:#ffffff;
+      text-shadow: 0 2px 8px rgba(0,0,0,.85);
+      letter-spacing: .2px;
+    }
+
+    .card p{
+      margin:0 0 14px;
+      color: rgba(255,255,255,.92);
+      line-height: 1.45;
+      text-shadow: 0 1px 4px rgba(0,0,0,.75);
+      white-space: pre-line; /* to render \n */
+    }
+
+    .btnRow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+
     button {
       pointer-events:auto;
       appearance:none; border:0; border-radius:12px;
-      padding:10px 12px; font-weight:700; cursor:pointer;
+      padding:10px 12px; font-weight:900; cursor:pointer;
       background: #e9eefc; color:#0b0e14;
     }
-    button.secondary { background: rgba(233,238,252,.14); color:#e9eefc; border:1px solid rgba(233,238,252,.18); }
+    button.secondary {
+      background: rgba(233,238,252,.14);
+      color:#ffffff;
+      border:1px solid rgba(233,238,252,.18);
+    }
     button:active { transform: translateY(1px); }
-    .small { font-size:12px; opacity:.85; }
+
+    .small {
+      font-size: 12px;
+      color: rgba(255,255,255,.75);
+      text-shadow: 0 1px 3px rgba(0,0,0,.7);
+    }
+
     .hintBar {
       position:fixed; left:50%; bottom:14px; transform:translateX(-50%);
       padding:10px 12px; border-radius:999px;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.08);
-      backdrop-filter: blur(8px);
+      background: rgba(0,0,0,.55);
+      border: 1px solid rgba(255,255,255,.18);
+      backdrop-filter: blur(10px);
       pointer-events:none;
-      color: rgba(233,238,252,.92);
-      max-width: min(680px, calc(100vw - 24px));
+      color: rgba(255,255,255,.95);
+      max-width: min(780px, calc(100vw - 24px));
       text-align:center;
+      text-shadow: 0 2px 6px rgba(0,0,0,.85);
+      white-space: pre-line;
     }
   </style>
 </head>
 <body>
-<canvas id="c"></canvas>
+  <canvas id="c"></canvas>
 
-<div class="hud">
-  <div class="top">
-    <div class="pill"><b>Time</b> <span id="time">60.0</span>s</div>
-    <div class="pill"><b>Score</b> <span id="score">0</span></div>
-    <div class="pill"><b>HP</b> <span id="hp">100</span></div>
-  </div>
-</div>
+  <div class="hud">
+    <div class="top">
+      <div class="pill"><b id="lblTime">Time</b> <span id="time">60.0</span>s</div>
+      <div class="pill"><b id="lblScore">Score</b> <span id="score">0</span></div>
+      <div class="pill"><b id="lblHp">HP</b> <span id="hp">100</span></div>
 
-<div class="centerOverlay" id="overlay" style="display:flex;">
-  <div class="card" id="card">
-    <h1>Survive 60 seconds</h1>
-    <p>
-      Move to dodge. You auto-attack nearby enemies.<br/>
-      Survive the chaos near the end. One revive available after 40s.
-    </p>
-    <div class="btnRow">
-      <button id="startBtn">Start</button>
-      <button class="secondary" id="howBtn">How to play</button>
+      <div class="pill langPill" style="margin-left:auto;">
+        <b id="lblLang">Lang</b>
+        <button class="langBtn" id="langEN" type="button">EN</button>
+        <button class="langBtn" id="langRU" type="button">RU</button>
+      </div>
     </div>
-    <p class="small" style="margin-top:10px;">
-      Controls: WASD / Arrow keys • Mobile: drag to move • Restart: Space/Enter
-    </p>
   </div>
-</div>
 
-<div class="hintBar" id="hint" style="display:none;"></div>
+  <div class="centerOverlay" id="overlay" style="display:flex;">
+    <div class="card" id="card"></div>
+  </div>
+
+  <div class="hintBar" id="hint" style="display:none;"></div>
 
 <script>
 (() => {
   // ======================
-  // Professional MVP notes:
-  // - Fixed timestep update for consistent behavior
-  // - Mobile drag movement + keyboard
-  // - Clean separation: state, entities, rendering
-  // - Ad hooks (Yandex SDK) are stubbed; integrate later
+  // Survive 60s — bilingual (EN/RU) + improved UI contrast
+  // Single-file HTML5 game (good for Yandex Games pipeline)
   // ======================
 
+  // ---------- Language ----------
+  const I18N = {
+    en: {
+      hud_time: "Time",
+      hud_score: "Score",
+      hud_hp: "HP",
+      hud_lang: "Lang",
+
+      menu_title: "Survive 60 seconds",
+      menu_text: "Move to dodge. You auto-attack nearby enemies.\nOne revive available after 40s.",
+      menu_start: "Start",
+      menu_how: "How to play",
+      menu_controls: "Controls: WASD / Arrow keys • Mobile: drag to move • Restart: Space/Enter",
+
+      how_title: "How to play",
+      how_text: "Goal: Survive 60 seconds.\nMove to dodge enemies.\nYou auto-attack the nearest enemy in range.\n\nDifficulty ramps hard after 45s — that’s the fun part.",
+      how_back: "Back",
+      how_tip: "Tip: keep moving in arcs, not straight lines.",
+
+      dead_title: (sec) => `You died at ${sec.toFixed(1)}s`,
+      dead_text: "Revive once and continue? (Best value after 40s)",
+      revive_yes: "Revive (Rewarded)",
+      revive_no: "No thanks",
+      dead_tip: "Tip: dodge late waves — they spike hard after 45s.",
+
+      end_win_title: "You survived 60s!",
+      end_lose_title: "Run ended",
+      end_win_text: "Nice. Can you do it again with a higher score?",
+      end_lose_text: "One more try — the first 10 seconds are free learning.",
+      end_again: "Play again",
+      end_menu: "Main menu",
+      end_restart: "Restart instantly: Space / Enter",
+
+      hint_start: "Survive 60s.\nRevive available after 40s.",
+      hint_shield: "Shield active!",
+    },
+    ru: {
+      hud_time: "Время",
+      hud_score: "Счёт",
+      hud_hp: "HP",
+      hud_lang: "Язык",
+
+      menu_title: "Выжить 60 секунд",
+      menu_text: "Двигайся, чтобы уклоняться. Ты автоматически атакуешь ближайших врагов.\nОдин ревив доступен после 40 секунд.",
+      menu_start: "Играть",
+      menu_how: "Как играть",
+      menu_controls: "Управление: WASD / Стрелки • Мобайл: тяни для движения • Рестарт: Space/Enter",
+
+      how_title: "Как играть",
+      how_text: "Цель: выжить 60 секунд.\nДвигайся, чтобы уклоняться от врагов.\nТы автоматически атакуешь ближайшего врага в радиусе.\n\nСложность резко растёт после 45 секунд — вот где кайф.",
+      how_back: "Назад",
+      how_tip: "Совет: двигайся дугами, не по прямой.",
+
+      dead_title: (sec) => `Ты погиб на ${sec.toFixed(1)}с`,
+      dead_text: "Ревив один раз и продолжить? (Лучше всего после 40с)",
+      revive_yes: "Ревив (Награда)",
+      revive_no: "Не нужно",
+      dead_tip: "Совет: после 45с волны резко усиливаются.",
+
+      end_win_title: "Ты выжил 60 секунд!",
+      end_lose_title: "Забег окончен",
+      end_win_text: "Отлично. Сможешь повторить с большим счётом?",
+      end_lose_text: "Ещё раз — первые 10 секунд легко освоить.",
+      end_again: "Ещё раз",
+      end_menu: "Меню",
+      end_restart: "Быстрый рестарт: Space / Enter",
+
+      hint_start: "Выживи 60с.\nРевив доступен после 40с.",
+      hint_shield: "Щит активен!",
+    }
+  };
+
+  function detectLang() {
+    const saved = localStorage.getItem("survive60_lang");
+    if (saved === "en" || saved === "ru") return saved;
+    const nav = (navigator.language || "en").toLowerCase();
+    return nav.startsWith("ru") ? "ru" : "en";
+  }
+
+  let lang = detectLang();
+  const t = (key, ...args) => {
+    const v = I18N[lang][key];
+    return typeof v === "function" ? v(...args) : v;
+  };
+
+  function setLang(newLang) {
+    if (newLang !== "en" && newLang !== "ru") return;
+    lang = newLang;
+    localStorage.setItem("survive60_lang", newLang);
+    applyHudText();
+    // Re-render current overlay with new language
+    if (state.mode === "menu") goMenu();
+    else if (state.mode === "dead" || state.mode === "win") showEndScreen(state.mode === "win");
+  }
+
+  // ---------- DOM ----------
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d', { alpha: false });
 
   const uiTime = document.getElementById('time');
   const uiScore = document.getElementById('score');
   const uiHp = document.getElementById('hp');
+
+  const lblTime = document.getElementById('lblTime');
+  const lblScore = document.getElementById('lblScore');
+  const lblHp = document.getElementById('lblHp');
+  const lblLang = document.getElementById('lblLang');
+
+  const btnEN = document.getElementById('langEN');
+  const btnRU = document.getElementById('langRU');
+
   const overlay = document.getElementById('overlay');
   const card = document.getElementById('card');
-  const startBtn = document.getElementById('startBtn');
-  const howBtn = document.getElementById('howBtn');
   const hint = document.getElementById('hint');
+
+  btnEN.addEventListener("click", () => setLang("en"));
+  btnRU.addEventListener("click", () => setLang("ru"));
+
+  function applyHudText() {
+    lblTime.textContent = t("hud_time");
+    lblScore.textContent = t("hud_score");
+    lblHp.textContent = t("hud_hp");
+    lblLang.textContent = t("hud_lang");
+
+    btnEN.classList.toggle("active", lang === "en");
+    btnRU.classList.toggle("active", lang === "ru");
+  }
+  applyHudText();
 
   function resize() {
     const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
@@ -124,7 +287,7 @@
 
   // ---------- Utils ----------
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const lerp = (a, b, t) => a + (b - a) * t;
+  const lerp = (a, b, tt) => a + (b - a) * tt;
   const rand = (a, b) => a + Math.random() * (b - a);
   const dist2 = (ax, ay, bx, by) => {
     const dx = ax - bx, dy = ay - by;
@@ -135,9 +298,7 @@
   const keys = new Set();
   window.addEventListener('keydown', (e) => {
     keys.add(e.key.toLowerCase());
-    if ((e.key === ' ' || e.key === 'Enter') && (state.mode === 'dead' || state.mode === 'win')) {
-      restart();
-    }
+    if ((e.key === ' ' || e.key === 'Enter') && (state.mode === 'dead' || state.mode === 'win')) restart();
   });
   window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 
@@ -162,13 +323,12 @@
     timeLeft: 60,
     score: 0,
     shake: 0,
-    shakeX: 0, shakeY: 0,
     lastNow: performance.now(),
     accumulator: 0,
     dtFixed: 1/120,
     usedRevive: false,
     canRevive: false,
-    interstitialCounter: 0, // simulate "every 2-3 runs"
+    interstitialCounter: 0,
   };
 
   const world = {
@@ -186,13 +346,13 @@
     speed: 260,
     invuln: 0,
     atkCooldown: 0,
-    atkRate: 0.18, // seconds
+    atkRate: 0.18,
     atkRange: 110,
     atkDamage: 14,
   };
 
   const enemies = [];
-  const bullets = []; // very short-lived "slashes"
+  const bullets = [];
   const particles = [];
   const floaters = [];
 
@@ -206,7 +366,7 @@
     player.y = world.cy();
     player.vx = 0; player.vy = 0;
     player.hp = player.maxHp;
-    player.invuln = 1.2; // brief start safety
+    player.invuln = 1.2;
     player.atkCooldown = 0;
 
     state.t = 0;
@@ -218,26 +378,19 @@
   }
 
   // ---------- Spawning / Difficulty ----------
-  function difficultyCurve(t) {
-    // t = seconds elapsed (0..60)
-    // Slow ramp then sharp ramp after ~35s to create "near win deaths".
-    const a = clamp(t / 60, 0, 1);
-    const spike = clamp((t - 35) / 25, 0, 1); // 0 until 35s
-    // spawn rate in enemies/sec
+  function difficultyCurve(tt) {
+    const a = clamp(tt / 60, 0, 1);
+    const spike = clamp((tt - 35) / 25, 0, 1);
     const spawn = lerp(0.9, 2.2, a) + lerp(0, 2.0, spike);
-    // enemy speed multiplier
     const speedMul = lerp(0.9, 1.35, a) + lerp(0, 0.55, spike);
-    // chance of fast enemy
     const fastChance = lerp(0.05, 0.25, a) + lerp(0, 0.20, spike);
     return { spawn, speedMul, fastChance };
   }
 
   let spawnAccum = 0;
 
-  function spawnEnemy(t) {
-    const { speedMul, fastChance } = difficultyCurve(t);
-
-    // Spawn off-screen around the edges
+  function spawnEnemy(tt) {
+    const { speedMul, fastChance } = difficultyCurve(tt);
     const margin = 60;
     const side = Math.floor(Math.random()*4);
     let x, y;
@@ -252,11 +405,8 @@
     const hp = fast ? 24 : 40;
 
     enemies.push({
-      x, y,
-      vx: 0, vy: 0,
-      r,
-      hp,
-      maxHp: hp,
+      x, y, vx: 0, vy: 0,
+      r, hp, maxHp: hp,
       speed: baseSpeed * speedMul,
       dmg: fast ? 10 : 14,
       knockResist: fast ? 0.6 : 0.3,
@@ -286,42 +436,30 @@
 
   // ---------- Ads (stubs) ----------
   async function showRewardedAdStub() {
-    // In Yandex Games, you'd call the SDK:
-    // ysdk.adv.showRewardedVideo({ callbacks: { onRewarded: ..., onClose: ... } })
-    // Here, we simulate success.
     return new Promise((resolve) => setTimeout(() => resolve(true), 450));
   }
-
   async function showInterstitialAdStub() {
-    // In Yandex Games:
-    // ysdk.adv.showFullscreenAdv({ callbacks: { onClose: ... } })
     return new Promise((resolve) => setTimeout(() => resolve(true), 350));
   }
 
   // ---------- Gameplay ----------
   function applyPlayerInput(dt) {
     let ix = 0, iy = 0;
-
     if (keys.has('w') || keys.has('arrowup')) iy -= 1;
     if (keys.has('s') || keys.has('arrowdown')) iy += 1;
     if (keys.has('a') || keys.has('arrowleft')) ix -= 1;
     if (keys.has('d') || keys.has('arrowright')) ix += 1;
 
-    // mobile drag: direction from touch start to current
     if (touchActive) {
       const dx = touchPos.x - touchStart.x;
       const dy = touchPos.y - touchStart.y;
       const len = Math.hypot(dx, dy);
-      if (len > 8) {
-        ix = dx / len;
-        iy = dy / len;
-      }
+      if (len > 8) { ix = dx / len; iy = dy / len; }
     }
 
     const len = Math.hypot(ix, iy) || 1;
     ix /= len; iy /= len;
 
-    // Smooth acceleration
     const targetVx = ix * player.speed;
     const targetVy = iy * player.speed;
     player.vx = lerp(player.vx, targetVx, 1 - Math.pow(0.001, dt));
@@ -330,7 +468,6 @@
     player.x += player.vx * dt;
     player.y += player.vy * dt;
 
-    // Keep in bounds with soft clamp
     player.x = clamp(player.x, player.r, world.w() - player.r);
     player.y = clamp(player.y, player.r, world.h() - player.r);
   }
@@ -339,7 +476,6 @@
     player.atkCooldown -= dt;
     if (player.atkCooldown > 0) return;
 
-    // Find nearest enemy in range
     let best = -1;
     let bestD = Infinity;
     const range2 = player.atkRange * player.atkRange;
@@ -347,17 +483,13 @@
     for (let i=0; i<enemies.length; i++) {
       const e = enemies[i];
       const d = dist2(player.x, player.y, e.x, e.y);
-      if (d < range2 && d < bestD) {
-        bestD = d; best = i;
-      }
+      if (d < range2 && d < bestD) { bestD = d; best = i; }
     }
-
     if (best === -1) return;
 
     const e = enemies[best];
     player.atkCooldown = player.atkRate;
 
-    // Create a quick "slash" bullet that hits instantly
     const dx = e.x - player.x;
     const dy = e.y - player.y;
     const len = Math.hypot(dx, dy) || 1;
@@ -370,7 +502,6 @@
       life: 0.06,
       age: 0,
       dmg: player.atkDamage,
-      pierce: false,
     });
   }
 
@@ -381,7 +512,6 @@
       b.x += b.vx * dt;
       b.y += b.vy * dt;
 
-      // Collision with enemies
       for (let j=enemies.length-1; j>=0; j--) {
         const e = enemies[j];
         const rr = (e.r + 6) * (e.r + 6);
@@ -389,7 +519,7 @@
           e.hp -= b.dmg;
           addParticles(b.x, b.y, 10);
           addFloater(e.x, e.y - 10, `-${b.dmg}`);
-          // knockback
+
           const dx = e.x - player.x;
           const dy = e.y - player.y;
           const len = Math.hypot(dx, dy) || 1;
@@ -398,14 +528,12 @@
           e.vy += (dy/len) * kb;
 
           state.shake = Math.min(8, state.shake + 2.5);
-
-          // remove bullet
           bullets.splice(i, 1);
           break;
         }
       }
 
-      if (i < bullets.length) { // still exists
+      if (i < bullets.length) {
         if (b.age >= b.life) bullets.splice(i, 1);
       }
     }
@@ -415,7 +543,6 @@
     for (let i=enemies.length-1; i>=0; i--) {
       const e = enemies[i];
 
-      // Die
       if (e.hp <= 0) {
         state.score += (e.type === 'fast') ? 14 : 10;
         addParticles(e.x, e.y, 18);
@@ -423,7 +550,6 @@
         continue;
       }
 
-      // Move towards player + friction on velocity
       const dx = player.x - e.x;
       const dy = player.y - e.y;
       const len = Math.hypot(dx, dy) || 1;
@@ -431,18 +557,15 @@
       const ax = (dx/len) * e.speed;
       const ay = (dy/len) * e.speed;
 
-      // blend steering with current velocity (gives "weight")
       e.vx = lerp(e.vx, ax, 1 - Math.pow(0.002, dt));
       e.vy = lerp(e.vy, ay, 1 - Math.pow(0.002, dt));
 
-      // extra damping (for knockback settle)
       e.vx *= Math.pow(0.06, dt);
       e.vy *= Math.pow(0.06, dt);
 
       e.x += e.vx * dt;
       e.y += e.vy * dt;
 
-      // Attack player on contact
       const rr = (player.r + e.r) * (player.r + e.r);
       if (dist2(player.x, player.y, e.x, e.y) < rr) {
         if (player.invuln <= 0) {
@@ -451,7 +574,7 @@
           state.shake = Math.min(12, state.shake + 6);
           addParticles(player.x, player.y, 22);
           addFloater(player.x, player.y - 16, `-${e.dmg}`);
-          // push away
+
           const px = (player.x - e.x);
           const py = (player.y - e.y);
           const plen = Math.hypot(px, py) || 1;
@@ -483,11 +606,8 @@
   function updateGame(dt) {
     state.t += dt;
     state.timeLeft = Math.max(0, 60 - state.t);
-
-    // Allow revive only after 40s, only if not used
     state.canRevive = (!state.usedRevive && state.t >= 40);
 
-    // Spawn
     const { spawn } = difficultyCurve(state.t);
     spawnAccum += spawn * dt;
     while (spawnAccum >= 1) {
@@ -495,7 +615,6 @@
       spawnEnemy(state.t);
     }
 
-    // Update
     if (player.invuln > 0) player.invuln -= dt;
 
     applyPlayerInput(dt);
@@ -504,21 +623,15 @@
     updateEnemies(dt);
     updateParticles(dt);
 
-    // Win/Lose
-    if (player.hp <= 0) {
-      player.hp = 0;
-      endRun(false);
-    } else if (state.timeLeft <= 0) {
-      endRun(true);
-    }
+    if (player.hp <= 0) { player.hp = 0; endRun(false); }
+    else if (state.timeLeft <= 0) endRun(true);
   }
 
-  // ---------- End / UI ----------
+  // ---------- UI helpers ----------
   function setHint(text) {
     hint.textContent = text;
     hint.style.display = text ? 'block' : 'none';
   }
-
   function showOverlay(html) {
     card.innerHTML = html;
     overlay.style.display = 'flex';
@@ -527,114 +640,55 @@
     overlay.style.display = 'none';
   }
 
-  async function endRun(win) {
-    if (state.mode !== 'playing') return;
-    state.mode = win ? 'win' : 'dead';
-
-    // If dead and revive available, present revive choice (ideal rewarded ad)
-    if (!win && state.canRevive) {
-      showOverlay(`
-        <h1>You died at ${Math.max(0, 60 - state.timeLeft).toFixed(1)}s</h1>
-        <p>Revive once and continue? (Best value after 40s)</p>
-        <div class="btnRow">
-          <button id="reviveBtn">Revive (Rewarded)</button>
-          <button class="secondary" id="noBtn">No thanks</button>
-        </div>
-        <p class="small" style="margin-top:10px;">Tip: dodge late waves — they spike hard after 45s.</p>
-      `);
-
-      document.getElementById('reviveBtn').onclick = async () => {
-        // pause logic implicitly via overlay; now show ad
-        const ok = await showRewardedAdStub();
-        if (ok) {
-          state.usedRevive = true;
-          player.hp = Math.max(35, Math.floor(player.maxHp * 0.40));
-          player.invuln = 2.2; // shield
-          // soften pressure briefly
-          // remove some enemies to feel "saved"
-          enemies.splice(0, Math.floor(enemies.length * 0.35));
-          addParticles(player.x, player.y, 40);
-          hideOverlay();
-          state.mode = 'playing';
-          setHint('Shield active!');
-          setTimeout(() => setHint(''), 1200);
-        } else {
-          // if ad fails, just continue end screen
-          showEndScreen(win);
-        }
-      };
-
-      document.getElementById('noBtn').onclick = () => showEndScreen(win);
-      return;
-    }
-
-    showEndScreen(win);
+  function overlayLangButtonsInline() {
+    // small inline toggles for overlay (optional but convenient)
+    const enActive = lang === "en" ? "active" : "";
+    const ruActive = lang === "ru" ? "active" : "";
+    return `
+      <div class="btnRow" style="margin-bottom:10px;">
+        <span class="small" style="margin-right:8px;">${t("hud_lang")}:</span>
+        <button class="langBtn ${enActive}" id="ovEN" type="button">EN</button>
+        <button class="langBtn ${ruActive}" id="ovRU" type="button">RU</button>
+      </div>
+    `;
   }
 
-  async function maybeShowInterstitial() {
-    // Strategy: show interstitial every ~2 runs, but never back-to-back harshly.
-    state.interstitialCounter++;
-    const show = (state.interstitialCounter % 3 === 0) || (state.interstitialCounter % 5 === 0);
-    if (show) await showInterstitialAdStub();
-  }
-
-  async function showEndScreen(win) {
-    // interstitial at run end only (best practice)
-    await maybeShowInterstitial();
-
-    const title = win ? 'You survived 60s!' : 'Run ended';
-    const subtitle = win
-      ? 'Nice. Can you do it again with a higher score?'
-      : 'One more try — the first 10 seconds are free learning.';
-    showOverlay(`
-      <h1>${title}</h1>
-      <p>${subtitle}</p>
-      <div class="pill" style="margin: 10px 0 12px; display:inline-flex;">
-        <b>Score</b>&nbsp; ${state.score}
-      </div>
-      <div class="btnRow">
-        <button id="againBtn">Play again</button>
-        <button class="secondary" id="menuBtn">Main menu</button>
-      </div>
-      <p class="small" style="margin-top:10px;">Restart instantly: Space / Enter</p>
-    `);
-
-    document.getElementById('againBtn').onclick = () => restart();
-    document.getElementById('menuBtn').onclick = () => goMenu();
+  function wireOverlayLangButtons() {
+    const ovEN = document.getElementById("ovEN");
+    const ovRU = document.getElementById("ovRU");
+    if (ovEN) ovEN.onclick = () => setLang("en");
+    if (ovRU) ovRU.onclick = () => setLang("ru");
   }
 
   function goMenu() {
     state.mode = 'menu';
     setHint('');
     showOverlay(`
-      <h1>Survive 60 seconds</h1>
-      <p>Move to dodge. You auto-attack nearby enemies.<br/>One revive available after 40s.</p>
+      ${overlayLangButtonsInline()}
+      <h1>${t("menu_title")}</h1>
+      <p>${t("menu_text")}</p>
       <div class="btnRow">
-        <button id="startBtn2">Start</button>
-        <button class="secondary" id="howBtn2">How to play</button>
+        <button id="startBtn2" type="button">${t("menu_start")}</button>
+        <button class="secondary" id="howBtn2" type="button">${t("menu_how")}</button>
       </div>
-      <p class="small" style="margin-top:10px;">
-        Controls: WASD / Arrow keys • Mobile: drag to move • Restart: Space/Enter
-      </p>
+      <p class="small" style="margin-top:10px;">${t("menu_controls")}</p>
     `);
+    wireOverlayLangButtons();
     document.getElementById('startBtn2').onclick = () => start();
     document.getElementById('howBtn2').onclick = () => showHow();
   }
 
   function showHow() {
     showOverlay(`
-      <h1>How to play</h1>
-      <p>
-        <b>Goal:</b> Survive 60 seconds.<br/>
-        <b>Controls:</b> WASD/Arrows or drag on mobile.<br/>
-        <b>Combat:</b> You auto-attack the nearest enemy in range.<br/><br/>
-        Difficulty ramps hard after 45s — that’s the fun part.
-      </p>
+      ${overlayLangButtonsInline()}
+      <h1>${t("how_title")}</h1>
+      <p>${t("how_text")}</p>
       <div class="btnRow">
-        <button id="backBtn">Back</button>
+        <button id="backBtn" type="button">${t("how_back")}</button>
       </div>
-      <p class="small" style="margin-top:10px;">Tip: keep moving in arcs, not straight lines.</p>
+      <p class="small" style="margin-top:10px;">${t("how_tip")}</p>
     `);
+    wireOverlayLangButtons();
     document.getElementById('backBtn').onclick = () => goMenu();
   }
 
@@ -643,7 +697,7 @@
     spawnAccum = 0;
     state.mode = 'playing';
     hideOverlay();
-    setHint('Survive 60s. Revive available after 40s.');
+    setHint(t("hint_start"));
     setTimeout(() => setHint(''), 1800);
   }
 
@@ -655,14 +709,81 @@
     setHint('');
   }
 
-  startBtn.onclick = () => start();
-  howBtn.onclick = () => showHow();
+  async function maybeShowInterstitial() {
+    state.interstitialCounter++;
+    const show = (state.interstitialCounter % 3 === 0) || (state.interstitialCounter % 5 === 0);
+    if (show) await showInterstitialAdStub();
+  }
+
+  async function endRun(win) {
+    if (state.mode !== 'playing') return;
+    state.mode = win ? 'win' : 'dead';
+
+    if (!win && state.canRevive) {
+      const sec = Math.max(0, 60 - state.timeLeft);
+      showOverlay(`
+        ${overlayLangButtonsInline()}
+        <h1>${t("dead_title", sec)}</h1>
+        <p>${t("dead_text")}</p>
+        <div class="btnRow">
+          <button id="reviveBtn" type="button">${t("revive_yes")}</button>
+          <button class="secondary" id="noBtn" type="button">${t("revive_no")}</button>
+        </div>
+        <p class="small" style="margin-top:10px;">${t("dead_tip")}</p>
+      `);
+      wireOverlayLangButtons();
+
+      document.getElementById('reviveBtn').onclick = async () => {
+        const ok = await showRewardedAdStub();
+        if (ok) {
+          state.usedRevive = true;
+          player.hp = Math.max(35, Math.floor(player.maxHp * 0.40));
+          player.invuln = 2.2;
+          enemies.splice(0, Math.floor(enemies.length * 0.35));
+          addParticles(player.x, player.y, 40);
+          hideOverlay();
+          state.mode = 'playing';
+          setHint(t("hint_shield"));
+          setTimeout(() => setHint(''), 1200);
+        } else {
+          showEndScreen(win);
+        }
+      };
+      document.getElementById('noBtn').onclick = () => showEndScreen(win);
+      return;
+    }
+
+    showEndScreen(win);
+  }
+
+  async function showEndScreen(win) {
+    await maybeShowInterstitial();
+    const title = win ? t("end_win_title") : t("end_lose_title");
+    const subtitle = win ? t("end_win_text") : t("end_lose_text");
+
+    showOverlay(`
+      ${overlayLangButtonsInline()}
+      <h1>${title}</h1>
+      <p>${subtitle}</p>
+      <div class="pill" style="margin: 10px 0 12px; display:inline-flex;">
+        <b>${t("hud_score")}</b>&nbsp; ${state.score}
+      </div>
+      <div class="btnRow">
+        <button id="againBtn" type="button">${t("end_again")}</button>
+        <button class="secondary" id="menuBtn" type="button">${t("end_menu")}</button>
+      </div>
+      <p class="small" style="margin-top:10px;">${t("end_restart")}</p>
+    `);
+    wireOverlayLangButtons();
+
+    document.getElementById('againBtn').onclick = () => restart();
+    document.getElementById('menuBtn').onclick = () => goMenu();
+  }
 
   // ---------- Rendering ----------
   function render() {
     const w = window.innerWidth, h = window.innerHeight;
 
-    // screen shake (small, readable)
     state.shake = Math.max(0, state.shake - 20 * state.dtFixed);
     const sx = (Math.random()*2 - 1) * state.shake;
     const sy = (Math.random()*2 - 1) * state.shake;
@@ -670,11 +791,10 @@
     ctx.save();
     ctx.translate(sx, sy);
 
-    // background
     ctx.fillStyle = '#0b0e14';
     ctx.fillRect(0, 0, w, h);
 
-    // subtle grid (helps motion perception)
+    // subtle grid
     ctx.globalAlpha = 0.08;
     ctx.strokeStyle = '#cfe0ff';
     ctx.lineWidth = 1;
@@ -687,8 +807,8 @@
 
     // particles
     for (const p of particles) {
-      const t = 1 - (p.age / p.life);
-      ctx.globalAlpha = t;
+      const tt = 1 - (p.age / p.life);
+      ctx.globalAlpha = tt;
       ctx.fillStyle = '#e9eefc';
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
@@ -696,7 +816,7 @@
     }
     ctx.globalAlpha = 1;
 
-    // bullets (slashes)
+    // bullets
     for (const b of bullets) {
       ctx.strokeStyle = 'rgba(233,238,252,.85)';
       ctx.lineWidth = 3;
@@ -708,13 +828,11 @@
 
     // enemies
     for (const e of enemies) {
-      // body
       ctx.fillStyle = (e.type === 'fast') ? '#ffdf6e' : '#ff6b8a';
       ctx.beginPath();
       ctx.arc(e.x, e.y, e.r, 0, Math.PI*2);
       ctx.fill();
 
-      // hp ring (tiny)
       ctx.globalAlpha = 0.35;
       ctx.strokeStyle = '#0b0e14';
       ctx.lineWidth = 4;
@@ -740,10 +858,10 @@
     ctx.fill();
     ctx.globalAlpha = 1;
 
-    // attack range hint (subtle at low time, stronger near end)
+    // attack range hint
     if (state.mode === 'playing') {
-      const t = clamp((state.t - 42)/18, 0, 1);
-      ctx.globalAlpha = 0.06 + 0.06 * t;
+      const tt = clamp((state.t - 42)/18, 0, 1);
+      ctx.globalAlpha = 0.06 + 0.06 * tt;
       ctx.strokeStyle = '#7cf0c3';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -775,23 +893,19 @@
     ctx.restore();
   }
 
-  // ---------- Main Loop (fixed timestep) ----------
+  // ---------- Main Loop ----------
   function frame(now) {
     const delta = Math.min(0.05, (now - state.lastNow) / 1000);
     state.lastNow = now;
     state.accumulator += delta;
 
-    // update UI always
     uiTime.textContent = state.timeLeft.toFixed(1);
     uiScore.textContent = String(state.score);
     uiHp.textContent = String(Math.max(0, Math.floor(player.hp)));
 
     while (state.accumulator >= state.dtFixed) {
       state.accumulator -= state.dtFixed;
-
-      if (state.mode === 'playing') {
-        updateGame(state.dtFixed);
-      }
+      if (state.mode === 'playing') updateGame(state.dtFixed);
     }
 
     render();
@@ -800,8 +914,8 @@
 
   // boot
   resetEntities();
+  goMenu();
   requestAnimationFrame(frame);
-
 })();
 </script>
 </body>
