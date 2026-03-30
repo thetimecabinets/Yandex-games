@@ -22,6 +22,7 @@ deleteOnMitigation = input.bool(true, "Delete Zone On Mitigation", group=groupZo
 minZoneSizeTicks = input.int(0, "Min Zone Size (ticks, 0=off)", minval=0, group=groupZones)
 maxZonesPerPhase = input.int(4, "Max Zones Per Expansion Phase", minval=1, maxval=20, group=groupZones)
 onlyCurrentPhase = input.bool(true, "Show Only Current Expansion Phase", group=groupZones)
+phaseSourceGraceBars = input.int(40, "Allow Source Bars Before Shift", minval=0, maxval=300, group=groupZones)
 
 groupSignals = "4) Optional Entry Confirmation"
 showSignals = input.bool(false, "Show Sweep + MSS Signals", group=groupSignals)
@@ -170,6 +171,11 @@ if not na(htfLastSwingHigh) and htfClose > htfLastSwingHigh
 else if not na(htfLastSwingLow) and htfClose < htfLastSwingLow
     externalBias := -1
 
+// Bootstrap when strict break hasn't happened yet; avoids dead neutral startup.
+if externalBias == 0 and not na(htfLastSwingHigh) and not na(htfLastSwingLow)
+    float htfMid = (htfLastSwingHigh + htfLastSwingLow) * 0.5
+    externalBias := htfClose >= htfMid ? 1 : -1
+
 //==================================================
 // STEP 2: local swings
 //==================================================
@@ -185,14 +191,6 @@ float recentInternalLow = ta.lowest(low[1], internalShiftLookback)
 if externalBias != externalBias[1] and externalBias != 0
     expansionDir := 0
     expansionStartBar := na
-    array.clear(pendingLowSourceBars)
-    array.clear(pendingLowTops)
-    array.clear(pendingLowBots)
-    array.clear(pendingLowSwingBars)
-    array.clear(pendingHighSourceBars)
-    array.clear(pendingHighTops)
-    array.clear(pendingHighBots)
-    array.clear(pendingHighSwingBars)
 
 bool bullShift = externalBias == 1 and not na(recentInternalHigh) and close > recentInternalHigh
 bool bearShift = externalBias == -1 and not na(recentInternalLow) and close < recentInternalLow
@@ -201,52 +199,34 @@ if bullShift
     expansionDir := 1
     expansionStartBar := bar_index
     expansionPhaseId += 1
-    array.clear(pendingLowSourceBars)
-    array.clear(pendingLowTops)
-    array.clear(pendingLowBots)
-    array.clear(pendingLowSwingBars)
-    array.clear(pendingHighSourceBars)
-    array.clear(pendingHighTops)
-    array.clear(pendingHighBots)
-    array.clear(pendingHighSwingBars)
 
 if bearShift
     expansionDir := -1
     expansionStartBar := bar_index
     expansionPhaseId += 1
-    array.clear(pendingLowSourceBars)
-    array.clear(pendingLowTops)
-    array.clear(pendingLowBots)
-    array.clear(pendingLowSwingBars)
-    array.clear(pendingHighSourceBars)
-    array.clear(pendingHighTops)
-    array.clear(pendingHighBots)
-    array.clear(pendingHighSwingBars)
 
 dbgBullInternalShift := bullShift
 dbgBearInternalShift := bearShift
 
 //==================================================
-// STEP 3: queue valid-source candidates only INSIDE active phase
+// STEP 3: queue valid-source candidates
 //==================================================
-if expansionDir == 1 and not na(expansionStartBar) and not na(swingLow)
+if not na(swingLow)
     int swingBar = bar_index - localPivotLen
     [srcBarL, srcTopL, srcBotL] = f_findBearishSource(localPivotLen, leftScanBars)
     srcBarL := int(srcBarL)
-    bool inPhase = not na(srcBarL) and srcBarL >= expansionStartBar
-    bool canQueueLow = inPhase and srcBarL < swingBar and not f_containsInt(pendingLowSourceBars, srcBarL)
+    bool canQueueLow = not na(srcBarL) and srcBarL < swingBar and not f_containsInt(pendingLowSourceBars, srcBarL)
     if canQueueLow
         array.push(pendingLowSourceBars, srcBarL)
         array.push(pendingLowTops, srcTopL)
         array.push(pendingLowBots, srcBotL)
         array.push(pendingLowSwingBars, swingBar)
 
-if expansionDir == -1 and not na(expansionStartBar) and not na(swingHigh)
+if not na(swingHigh)
     int swingBar = bar_index - localPivotLen
     [srcBarH, srcTopH, srcBotH] = f_findBullishSource(localPivotLen, leftScanBars)
     srcBarH := int(srcBarH)
-    bool inPhase = not na(srcBarH) and srcBarH >= expansionStartBar
-    bool canQueueHigh = inPhase and srcBarH < swingBar and not f_containsInt(pendingHighSourceBars, srcBarH)
+    bool canQueueHigh = not na(srcBarH) and srcBarH < swingBar and not f_containsInt(pendingHighSourceBars, srcBarH)
     if canQueueHigh
         array.push(pendingHighSourceBars, srcBarH)
         array.push(pendingHighTops, srcTopH)
@@ -269,7 +249,8 @@ if pendingLowCount > 0
             lastValidLowBar := srcBar
             lastValidLowPrice := srcBot
 
-            bool canCreateBullZone = externalBias == 1 and expansionDir == 1 and not na(expansionStartBar) and srcBar >= expansionStartBar
+            bool inPhaseWindow = not na(expansionStartBar) and bar_index >= expansionStartBar and srcBar >= expansionStartBar - phaseSourceGraceBars
+            bool canCreateBullZone = externalBias == 1 and expansionDir == 1 and inPhaseWindow
             bool duplicateZone = f_zoneExists(zoneSourceBars, zoneDirs, zonePhaseIds, srcBar, 1, expansionPhaseId)
             int phaseCount = f_countPhaseDir(zoneDirs, zonePhaseIds, 1, expansionPhaseId)
             bool underCap = phaseCount < maxZonesPerPhase
@@ -332,7 +313,8 @@ if pendingHighCount > 0
             lastValidHighBar := srcBar
             lastValidHighPrice := srcTop
 
-            bool canCreateBearZone = externalBias == -1 and expansionDir == -1 and not na(expansionStartBar) and srcBar >= expansionStartBar
+            bool inPhaseWindow = not na(expansionStartBar) and bar_index >= expansionStartBar and srcBar >= expansionStartBar - phaseSourceGraceBars
+            bool canCreateBearZone = externalBias == -1 and expansionDir == -1 and inPhaseWindow
             bool duplicateZone = f_zoneExists(zoneSourceBars, zoneDirs, zonePhaseIds, srcBar, -1, expansionPhaseId)
             int phaseCount = f_countPhaseDir(zoneDirs, zonePhaseIds, -1, expansionPhaseId)
             bool underCap = phaseCount < maxZonesPerPhase
