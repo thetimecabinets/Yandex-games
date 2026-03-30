@@ -1,0 +1,544 @@
+//@version=5
+indicator("AMN Expansion Zones", overlay=true, max_bars_back=5000, max_boxes_count=300, max_lines_count=900, max_labels_count=300)
+
+//------------------------------------------------------------------------------
+// Inputs
+//------------------------------------------------------------------------------
+groupHtf = "1. Higher Timeframe Bias"
+htfTf = input.timeframe("240", "HTF Timeframe", group=groupHtf)
+htfSwingLen = input.int(3, "HTF Swing Length", minval=1, group=groupHtf)
+
+groupStructure = "2. Local Structure"
+localPivotLen = input.int(3, "Local Pivot Length", minval=1, group=groupStructure)
+leftScanBars = input.int(20, "Left Scan Bars", minval=2, maxval=200, group=groupStructure)
+internalShiftLookback = input.int(10, "Internal Shift Lookback", minval=2, group=groupStructure)
+
+groupZones = "3. Zones"
+zoneExtendBars = input.int(80, "Zone Extend Bars", minval=5, maxval=500, group=groupZones)
+fibLevel = input.float(0.5, "Primary Fib Level", minval=0.0, maxval=1.0, step=0.05, group=groupZones)
+showFib = input.bool(true, "Show Fib Lines", group=groupZones)
+showExtraFib = input.bool(true, "Show 0.3 / 0.7 Fib Lines", group=groupZones)
+deleteOnMitigation = input.bool(true, "Delete Zone On Mitigation", group=groupZones)
+
+groupSignals = "4. Optional Entry Signals"
+showSignals = input.bool(true, "Show Sweep + MSS Signals", group=groupSignals)
+signalSweepLookback = input.int(5, "Sweep Lookback", minval=2, maxval=50, group=groupSignals)
+signalMssLookback = input.int(3, "Micro Structure Lookback", minval=2, maxval=20, group=groupSignals)
+signalExpiryBars = input.int(10, "Signal Expiry Bars", minval=1, maxval=50, group=groupSignals)
+
+groupDebug = "5. Debug"
+showDebug = input.bool(false, "Show Debug", group=groupDebug)
+
+//------------------------------------------------------------------------------
+// Constants
+//------------------------------------------------------------------------------
+bullBoxColor = color.new(color.teal, 82)
+bearBoxColor = color.new(color.red, 82)
+bullBorderColor = color.new(color.teal, 15)
+bearBorderColor = color.new(color.red, 15)
+bullFibColor = color.new(color.teal, 0)
+bearFibColor = color.new(color.red, 0)
+inactiveBullColor = color.new(color.teal, 92)
+inactiveBearColor = color.new(color.red, 92)
+inactiveBullLine = color.new(color.teal, 75)
+inactiveBearLine = color.new(color.red, 75)
+maxStoredZones = 75
+maxPendingCandidates = 100
+
+//------------------------------------------------------------------------------
+// Helper functions
+//------------------------------------------------------------------------------
+f_contains_int(array<int> values, int target) =>
+    bool found = false
+    if not na(target) and array.size(values) > 0
+        for i = 0 to array.size(values) - 1
+            if array.get(values, i) == target
+                found := true
+                break
+    found
+
+f_find_bearish_source(int pivotOffset, int scanBars) =>
+    float bestClose = na
+    float sourceHigh = na
+    float sourceLow = na
+    int sourceOffset = na
+    for i = pivotOffset + 1 to pivotOffset + scanBars
+        if close[i] < open[i]
+            if na(bestClose) or close[i] < bestClose
+                bestClose := close[i]
+                sourceHigh := high[i]
+                sourceLow := low[i]
+                sourceOffset := i
+    [sourceOffset, sourceHigh, sourceLow, bestClose]
+
+f_find_bullish_source(int pivotOffset, int scanBars) =>
+    float bestClose = na
+    float sourceHigh = na
+    float sourceLow = na
+    int sourceOffset = na
+    for i = pivotOffset + 1 to pivotOffset + scanBars
+        if close[i] > open[i]
+            if na(bestClose) or close[i] > bestClose
+                bestClose := close[i]
+                sourceHigh := high[i]
+                sourceLow := low[i]
+                sourceOffset := i
+    [sourceOffset, sourceHigh, sourceLow, bestClose]
+
+f_bias_text(int bias) =>
+    bias == 1 ? "Bullish" : bias == -1 ? "Bearish" : "Neutral"
+
+f_dir_text(int dir) =>
+    dir == 1 ? "Bullish" : dir == -1 ? "Bearish" : "Waiting"
+
+//------------------------------------------------------------------------------
+// Higher timeframe external bias engine
+//------------------------------------------------------------------------------
+htfClose = request.security(syminfo.tickerid, htfTf, close, lookahead=barmerge.lookahead_off)
+htfLastSwingHigh = request.security(
+    syminfo.tickerid,
+    htfTf,
+    ta.valuewhen(not na(ta.pivothigh(high, htfSwingLen, htfSwingLen)), ta.pivothigh(high, htfSwingLen, htfSwingLen), 0),
+    lookahead=barmerge.lookahead_off
+)
+htfLastSwingLow = request.security(
+    syminfo.tickerid,
+    htfTf,
+    ta.valuewhen(not na(ta.pivotlow(low, htfSwingLen, htfSwingLen)), ta.pivotlow(low, htfSwingLen, htfSwingLen), 0),
+    lookahead=barmerge.lookahead_off
+)
+
+var int externalBias = 0
+externalBias := not na(htfLastSwingHigh) and htfClose > htfLastSwingHigh ? 1 :
+     not na(htfLastSwingLow) and htfClose < htfLastSwingLow ? -1 :
+     nz(externalBias[1], 0)
+
+//------------------------------------------------------------------------------
+// Local pivots and internal structure shift
+//------------------------------------------------------------------------------
+localSwingLow = ta.pivotlow(low, localPivotLen, localPivotLen)
+localSwingHigh = ta.pivothigh(high, localPivotLen, localPivotLen)
+
+recentInternalHigh = ta.highest(high[1], internalShiftLookback)
+recentInternalLow = ta.lowest(low[1], internalShiftLookback)
+
+var int expansionDir = 0
+var int bullExpansionStartBar = na
+var int bearExpansionStartBar = na
+
+externalBiasChanged = externalBias != nz(externalBias[1], 0)
+if externalBiasChanged
+    expansionDir := 0
+    bullExpansionStartBar := na
+    bearExpansionStartBar := na
+
+bullishShift = externalBias == 1 and not na(recentInternalHigh) and close > recentInternalHigh
+bearishShift = externalBias == -1 and not na(recentInternalLow) and close < recentInternalLow
+
+if bullishShift and expansionDir != 1
+    expansionDir := 1
+    bullExpansionStartBar := bar_index
+
+if bearishShift and expansionDir != -1
+    expansionDir := -1
+    bearExpansionStartBar := bar_index
+
+//------------------------------------------------------------------------------
+// Pending valid low / valid high candidates
+//------------------------------------------------------------------------------
+var int[] pendingLowSourceBars = array.new_int()
+var int[] pendingLowSwingBars = array.new_int()
+var float[] pendingLowTops = array.new_float()
+var float[] pendingLowBots = array.new_float()
+
+var int[] pendingHighSourceBars = array.new_int()
+var int[] pendingHighSwingBars = array.new_int()
+var float[] pendingHighTops = array.new_float()
+var float[] pendingHighBots = array.new_float()
+
+//------------------------------------------------------------------------------
+// Stored zone state
+//------------------------------------------------------------------------------
+var box[] zoneBoxes = array.new_box()
+var line[] zoneMidLines = array.new_line()
+var line[] zoneFib30Lines = array.new_line()
+var line[] zoneFib70Lines = array.new_line()
+var float[] zoneTops = array.new_float()
+var float[] zoneBots = array.new_float()
+var float[] zoneMids = array.new_float()
+var float[] zoneFib30s = array.new_float()
+var float[] zoneFib70s = array.new_float()
+var int[] zoneDirs = array.new_int()
+var int[] zoneStartBars = array.new_int()
+var int[] zoneSourceBars = array.new_int()
+var bool[] zoneActive = array.new_bool()
+var int[] usedZoneSourceBars = array.new_int()
+
+//------------------------------------------------------------------------------
+// Optional entry confirmation state
+//------------------------------------------------------------------------------
+var bool pendingBullEntry = false
+var bool pendingBearEntry = false
+var float pendingBullTrigger = na
+var float pendingBearTrigger = na
+var int pendingBullExpiry = na
+var int pendingBearExpiry = na
+
+//------------------------------------------------------------------------------
+// Candidate creation from current timeframe swing points
+//------------------------------------------------------------------------------
+if not na(localSwingLow)
+    [bearishSourceOffset, bearishSourceHigh, bearishSourceLow, bearishSourceClose] = f_find_bearish_source(localPivotLen, leftScanBars)
+    if not na(bearishSourceOffset)
+        sourceBarIndex = bar_index - bearishSourceOffset
+        swingBarIndex = bar_index - localPivotLen
+        alreadyTracked = f_contains_int(pendingLowSourceBars, sourceBarIndex) or f_contains_int(usedZoneSourceBars, sourceBarIndex)
+        if not alreadyTracked
+            array.push(pendingLowSourceBars, sourceBarIndex)
+            array.push(pendingLowSwingBars, swingBarIndex)
+            array.push(pendingLowTops, bearishSourceHigh)
+            array.push(pendingLowBots, bearishSourceLow)
+            if array.size(pendingLowSourceBars) > maxPendingCandidates
+                array.shift(pendingLowSourceBars)
+                array.shift(pendingLowSwingBars)
+                array.shift(pendingLowTops)
+                array.shift(pendingLowBots)
+
+if not na(localSwingHigh)
+    [bullishSourceOffset, bullishSourceHigh, bullishSourceLow, bullishSourceClose] = f_find_bullish_source(localPivotLen, leftScanBars)
+    if not na(bullishSourceOffset)
+        sourceBarIndex = bar_index - bullishSourceOffset
+        swingBarIndex = bar_index - localPivotLen
+        alreadyTracked = f_contains_int(pendingHighSourceBars, sourceBarIndex) or f_contains_int(usedZoneSourceBars, sourceBarIndex)
+        if not alreadyTracked
+            array.push(pendingHighSourceBars, sourceBarIndex)
+            array.push(pendingHighSwingBars, swingBarIndex)
+            array.push(pendingHighTops, bullishSourceHigh)
+            array.push(pendingHighBots, bullishSourceLow)
+            if array.size(pendingHighSourceBars) > maxPendingCandidates
+                array.shift(pendingHighSourceBars)
+                array.shift(pendingHighSwingBars)
+                array.shift(pendingHighTops)
+                array.shift(pendingHighBots)
+
+//------------------------------------------------------------------------------
+// Valid low / valid high confirmation
+//------------------------------------------------------------------------------
+bool validLowConfirmedThisBar = false
+bool validHighConfirmedThisBar = false
+int validLowSourceBar = na
+int validHighSourceBar = na
+float validLowTop = na
+float validLowBot = na
+float validHighTop = na
+float validHighBot = na
+bool bullZoneCreatedThisBar = false
+bool bearZoneCreatedThisBar = false
+bool bullZoneMitigatedThisBar = false
+bool bearZoneMitigatedThisBar = false
+int mitigatedSourceBar = na
+
+if array.size(pendingLowSourceBars) > 0
+    for i = array.size(pendingLowSourceBars) - 1 to 0 by -1
+        candidateTop = array.get(pendingLowTops, i)
+        candidateBot = array.get(pendingLowBots, i)
+        candidateSourceBar = array.get(pendingLowSourceBars, i)
+        if close > candidateTop
+            validLowConfirmedThisBar := true
+            validLowSourceBar := candidateSourceBar
+            validLowTop := candidateTop
+            validLowBot := candidateBot
+
+            canCreateBullZone = externalBias == 1 and expansionDir == 1 and not na(bullExpansionStartBar) and bar_index >= bullExpansionStartBar and not f_contains_int(usedZoneSourceBars, candidateSourceBar)
+            if canCreateBullZone
+                if array.size(zoneBoxes) >= maxStoredZones
+                    box oldestBox = array.shift(zoneBoxes)
+                    line oldestMid = array.shift(zoneMidLines)
+                    line oldestFib30 = array.shift(zoneFib30Lines)
+                    line oldestFib70 = array.shift(zoneFib70Lines)
+                    box.delete(oldestBox)
+                    if not na(oldestMid)
+                        line.delete(oldestMid)
+                    if not na(oldestFib30)
+                        line.delete(oldestFib30)
+                    if not na(oldestFib70)
+                        line.delete(oldestFib70)
+                    array.shift(zoneTops)
+                    array.shift(zoneBots)
+                    array.shift(zoneMids)
+                    array.shift(zoneFib30s)
+                    array.shift(zoneFib70s)
+                    array.shift(zoneDirs)
+                    array.shift(zoneStartBars)
+                    array.shift(zoneSourceBars)
+                    array.shift(zoneActive)
+
+                zoneRange = candidateTop - candidateBot
+                zoneMid = candidateBot + zoneRange * fibLevel
+                zoneFib30 = candidateBot + zoneRange * 0.3
+                zoneFib70 = candidateBot + zoneRange * 0.7
+
+                box newBox = box.new(left=candidateSourceBar, top=candidateTop, right=bar_index + zoneExtendBars, bottom=candidateBot, xloc=xloc.bar_index, border_color=bullBorderColor, bgcolor=bullBoxColor)
+                line newMidLine = na
+                line newFib30Line = na
+                line newFib70Line = na
+                if showFib
+                    newMidLine := line.new(x1=candidateSourceBar, y1=zoneMid, x2=bar_index + zoneExtendBars, y2=zoneMid, xloc=xloc.bar_index, color=bullFibColor, style=line.style_dashed, width=1)
+                    if showExtraFib
+                        newFib30Line := line.new(x1=candidateSourceBar, y1=zoneFib30, x2=bar_index + zoneExtendBars, y2=zoneFib30, xloc=xloc.bar_index, color=color.new(bullFibColor, 35), style=line.style_dashed, width=1)
+                        newFib70Line := line.new(x1=candidateSourceBar, y1=zoneFib70, x2=bar_index + zoneExtendBars, y2=zoneFib70, xloc=xloc.bar_index, color=color.new(bullFibColor, 35), style=line.style_dashed, width=1)
+
+                array.push(zoneBoxes, newBox)
+                array.push(zoneMidLines, newMidLine)
+                array.push(zoneFib30Lines, newFib30Line)
+                array.push(zoneFib70Lines, newFib70Line)
+                array.push(zoneTops, candidateTop)
+                array.push(zoneBots, candidateBot)
+                array.push(zoneMids, zoneMid)
+                array.push(zoneFib30s, zoneFib30)
+                array.push(zoneFib70s, zoneFib70)
+                array.push(zoneDirs, 1)
+                array.push(zoneStartBars, bar_index)
+                array.push(zoneSourceBars, candidateSourceBar)
+                array.push(zoneActive, true)
+                array.push(usedZoneSourceBars, candidateSourceBar)
+                bullZoneCreatedThisBar := true
+
+            array.remove(pendingLowSourceBars, i)
+            array.remove(pendingLowSwingBars, i)
+            array.remove(pendingLowTops, i)
+            array.remove(pendingLowBots, i)
+
+if array.size(pendingHighSourceBars) > 0
+    for i = array.size(pendingHighSourceBars) - 1 to 0 by -1
+        candidateTop = array.get(pendingHighTops, i)
+        candidateBot = array.get(pendingHighBots, i)
+        candidateSourceBar = array.get(pendingHighSourceBars, i)
+        if close < candidateBot
+            validHighConfirmedThisBar := true
+            validHighSourceBar := candidateSourceBar
+            validHighTop := candidateTop
+            validHighBot := candidateBot
+
+            canCreateBearZone = externalBias == -1 and expansionDir == -1 and not na(bearExpansionStartBar) and bar_index >= bearExpansionStartBar and not f_contains_int(usedZoneSourceBars, candidateSourceBar)
+            if canCreateBearZone
+                if array.size(zoneBoxes) >= maxStoredZones
+                    box oldestBox = array.shift(zoneBoxes)
+                    line oldestMid = array.shift(zoneMidLines)
+                    line oldestFib30 = array.shift(zoneFib30Lines)
+                    line oldestFib70 = array.shift(zoneFib70Lines)
+                    box.delete(oldestBox)
+                    if not na(oldestMid)
+                        line.delete(oldestMid)
+                    if not na(oldestFib30)
+                        line.delete(oldestFib30)
+                    if not na(oldestFib70)
+                        line.delete(oldestFib70)
+                    array.shift(zoneTops)
+                    array.shift(zoneBots)
+                    array.shift(zoneMids)
+                    array.shift(zoneFib30s)
+                    array.shift(zoneFib70s)
+                    array.shift(zoneDirs)
+                    array.shift(zoneStartBars)
+                    array.shift(zoneSourceBars)
+                    array.shift(zoneActive)
+
+                zoneRange = candidateTop - candidateBot
+                zoneMid = candidateBot + zoneRange * fibLevel
+                zoneFib30 = candidateBot + zoneRange * 0.3
+                zoneFib70 = candidateBot + zoneRange * 0.7
+
+                box newBox = box.new(left=candidateSourceBar, top=candidateTop, right=bar_index + zoneExtendBars, bottom=candidateBot, xloc=xloc.bar_index, border_color=bearBorderColor, bgcolor=bearBoxColor)
+                line newMidLine = na
+                line newFib30Line = na
+                line newFib70Line = na
+                if showFib
+                    newMidLine := line.new(x1=candidateSourceBar, y1=zoneMid, x2=bar_index + zoneExtendBars, y2=zoneMid, xloc=xloc.bar_index, color=bearFibColor, style=line.style_dashed, width=1)
+                    if showExtraFib
+                        newFib30Line := line.new(x1=candidateSourceBar, y1=zoneFib30, x2=bar_index + zoneExtendBars, y2=zoneFib30, xloc=xloc.bar_index, color=color.new(bearFibColor, 35), style=line.style_dashed, width=1)
+                        newFib70Line := line.new(x1=candidateSourceBar, y1=zoneFib70, x2=bar_index + zoneExtendBars, y2=zoneFib70, xloc=xloc.bar_index, color=color.new(bearFibColor, 35), style=line.style_dashed, width=1)
+
+                array.push(zoneBoxes, newBox)
+                array.push(zoneMidLines, newMidLine)
+                array.push(zoneFib30Lines, newFib30Line)
+                array.push(zoneFib70Lines, newFib70Line)
+                array.push(zoneTops, candidateTop)
+                array.push(zoneBots, candidateBot)
+                array.push(zoneMids, zoneMid)
+                array.push(zoneFib30s, zoneFib30)
+                array.push(zoneFib70s, zoneFib70)
+                array.push(zoneDirs, -1)
+                array.push(zoneStartBars, bar_index)
+                array.push(zoneSourceBars, candidateSourceBar)
+                array.push(zoneActive, true)
+                array.push(usedZoneSourceBars, candidateSourceBar)
+                bearZoneCreatedThisBar := true
+
+            array.remove(pendingHighSourceBars, i)
+            array.remove(pendingHighSwingBars, i)
+            array.remove(pendingHighTops, i)
+            array.remove(pendingHighBots, i)
+
+//------------------------------------------------------------------------------
+// Zone mitigation state management
+//------------------------------------------------------------------------------
+bool priceInActiveBullZone = false
+bool priceInActiveBearZone = false
+
+if array.size(zoneBoxes) > 0
+    for i = array.size(zoneBoxes) - 1 to 0 by -1
+        zoneDir = array.get(zoneDirs, i)
+        isActive = array.get(zoneActive, i)
+        zoneTop = array.get(zoneTops, i)
+        zoneBot = array.get(zoneBots, i)
+        zoneMid = array.get(zoneMids, i)
+        startBar = array.get(zoneStartBars, i)
+        sourceBar = array.get(zoneSourceBars, i)
+
+        if isActive
+            mitigated = bar_index > startBar and ((zoneDir == 1 and low <= zoneMid) or (zoneDir == -1 and high >= zoneMid))
+            inZone = low <= zoneTop and high >= zoneBot
+            if not mitigated
+                priceInActiveBullZone := priceInActiveBullZone or (zoneDir == 1 and inZone)
+                priceInActiveBearZone := priceInActiveBearZone or (zoneDir == -1 and inZone)
+            if mitigated
+                bullZoneMitigatedThisBar := bullZoneMitigatedThisBar or zoneDir == 1
+                bearZoneMitigatedThisBar := bearZoneMitigatedThisBar or zoneDir == -1
+                mitigatedSourceBar := sourceBar
+
+                thisBox = array.get(zoneBoxes, i)
+                thisMid = array.get(zoneMidLines, i)
+                thisFib30 = array.get(zoneFib30Lines, i)
+                thisFib70 = array.get(zoneFib70Lines, i)
+
+                if deleteOnMitigation
+                    box.delete(thisBox)
+                    if not na(thisMid)
+                        line.delete(thisMid)
+                    if not na(thisFib30)
+                        line.delete(thisFib30)
+                    if not na(thisFib70)
+                        line.delete(thisFib70)
+
+                    array.remove(zoneBoxes, i)
+                    array.remove(zoneMidLines, i)
+                    array.remove(zoneFib30Lines, i)
+                    array.remove(zoneFib70Lines, i)
+                    array.remove(zoneTops, i)
+                    array.remove(zoneBots, i)
+                    array.remove(zoneMids, i)
+                    array.remove(zoneFib30s, i)
+                    array.remove(zoneFib70s, i)
+                    array.remove(zoneDirs, i)
+                    array.remove(zoneStartBars, i)
+                    array.remove(zoneSourceBars, i)
+                    array.remove(zoneActive, i)
+                else
+                    array.set(zoneActive, i, false)
+                    box.set_bgcolor(thisBox, zoneDir == 1 ? inactiveBullColor : inactiveBearColor)
+                    box.set_border_color(thisBox, zoneDir == 1 ? color.new(color.teal, 75) : color.new(color.red, 75))
+                    if not na(thisMid)
+                        line.set_color(thisMid, zoneDir == 1 ? inactiveBullLine : inactiveBearLine)
+                    if not na(thisFib30)
+                        line.set_color(thisFib30, zoneDir == 1 ? inactiveBullLine : inactiveBearLine)
+                    if not na(thisFib70)
+                        line.set_color(thisFib70, zoneDir == 1 ? inactiveBullLine : inactiveBearLine)
+
+//------------------------------------------------------------------------------
+// Optional sweep + MSS confirmations
+//------------------------------------------------------------------------------
+recentSweepLow = ta.lowest(low[1], signalSweepLookback)
+recentSweepHigh = ta.highest(high[1], signalSweepLookback)
+recentMicroHigh = ta.highest(high[1], signalMssLookback)
+recentMicroLow = ta.lowest(low[1], signalMssLookback)
+
+bullSweepCandle = showSignals and priceInActiveBullZone and not na(recentSweepLow) and low < recentSweepLow and close > open and not na(recentMicroHigh)
+bearSweepCandle = showSignals and priceInActiveBearZone and not na(recentSweepHigh) and high > recentSweepHigh and close < open and not na(recentMicroLow)
+
+if bullSweepCandle
+    pendingBullEntry := true
+    pendingBullTrigger := recentMicroHigh
+    pendingBullExpiry := bar_index + signalExpiryBars
+
+if bearSweepCandle
+    pendingBearEntry := true
+    pendingBearTrigger := recentMicroLow
+    pendingBearExpiry := bar_index + signalExpiryBars
+
+if pendingBullEntry and (bar_index > pendingBullExpiry or expansionDir != 1 or externalBias != 1)
+    pendingBullEntry := false
+    pendingBullTrigger := na
+    pendingBullExpiry := na
+
+if pendingBearEntry and (bar_index > pendingBearExpiry or expansionDir != -1 or externalBias != -1)
+    pendingBearEntry := false
+    pendingBearTrigger := na
+    pendingBearExpiry := na
+
+bullEntrySignal = pendingBullEntry and not na(pendingBullTrigger) and close > pendingBullTrigger
+bearEntrySignal = pendingBearEntry and not na(pendingBearTrigger) and close < pendingBearTrigger
+
+if bullEntrySignal
+    label.new(bar_index, low, "BUY", style=label.style_label_up, color=color.new(color.teal, 0), textcolor=color.white, size=size.small)
+    pendingBullEntry := false
+    pendingBullTrigger := na
+    pendingBullExpiry := na
+
+if bearEntrySignal
+    label.new(bar_index, high, "SELL", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
+    pendingBearEntry := false
+    pendingBearTrigger := na
+    pendingBearExpiry := na
+
+//------------------------------------------------------------------------------
+// Visual debug helpers
+//------------------------------------------------------------------------------
+plotshape(showDebug and bullishShift, title="Bullish Internal Shift", style=shape.triangleup, location=location.belowbar, color=color.new(color.teal, 0), size=size.tiny, text="Shift+")
+plotshape(showDebug and bearishShift, title="Bearish Internal Shift", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, text="Shift-")
+plotshape(showDebug and bullSweepCandle, title="Bull Sweep", style=shape.circle, location=location.belowbar, color=color.new(color.teal, 0), size=size.tiny, text="Sweep")
+plotshape(showDebug and bearSweepCandle, title="Bear Sweep", style=shape.circle, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, text="Sweep")
+
+if showDebug and validLowConfirmedThisBar
+    label.new(bar_index, low, "Valid Low\nsrc=" + str.tostring(validLowSourceBar), style=label.style_label_up, color=color.new(color.teal, 75), textcolor=color.white, size=size.small)
+
+if showDebug and validHighConfirmedThisBar
+    label.new(bar_index, high, "Valid High\nsrc=" + str.tostring(validHighSourceBar), style=label.style_label_down, color=color.new(color.red, 75), textcolor=color.white, size=size.small)
+
+if showDebug and bullZoneCreatedThisBar
+    label.new(bar_index, low, "Bull Zone", style=label.style_label_up, color=color.new(color.teal, 45), textcolor=color.white, size=size.tiny)
+
+if showDebug and bearZoneCreatedThisBar
+    label.new(bar_index, high, "Bear Zone", style=label.style_label_down, color=color.new(color.red, 45), textcolor=color.white, size=size.tiny)
+
+if showDebug and (bullZoneMitigatedThisBar or bearZoneMitigatedThisBar)
+    label.new(bar_index, close, "Mitigated\nsrc=" + str.tostring(mitigatedSourceBar), style=label.style_label_left, color=color.new(color.yellow, 55), textcolor=color.black, size=size.tiny)
+
+var table debugTable = table.new(position.top_right, 2, 6, border_width=1)
+if barstate.islast
+    if showDebug
+        table.cell(debugTable, 0, 0, "HTF Bias", text_color=color.white, bgcolor=color.new(color.black, 0))
+        table.cell(debugTable, 1, 0, f_bias_text(externalBias), text_color=externalBias == 1 ? color.teal : externalBias == -1 ? color.red : color.silver, bgcolor=color.new(color.black, 0))
+        table.cell(debugTable, 0, 1, "Expansion", text_color=color.white, bgcolor=color.new(color.black, 0))
+        table.cell(debugTable, 1, 1, f_dir_text(expansionDir), text_color=expansionDir == 1 ? color.teal : expansionDir == -1 ? color.red : color.silver, bgcolor=color.new(color.black, 0))
+        table.cell(debugTable, 0, 2, "HTF Swing High", text_color=color.white, bgcolor=color.new(color.black, 0))
+        table.cell(debugTable, 1, 2, str.tostring(htfLastSwingHigh, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 0))
+        table.cell(debugTable, 0, 3, "HTF Swing Low", text_color=color.white, bgcolor=color.new(color.black, 0))
+        table.cell(debugTable, 1, 3, str.tostring(htfLastSwingLow, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 0))
+        table.cell(debugTable, 0, 4, "Active Zones", text_color=color.white, bgcolor=color.new(color.black, 0))
+        table.cell(debugTable, 1, 4, str.tostring(array.size(zoneBoxes)), text_color=color.white, bgcolor=color.new(color.black, 0))
+        table.cell(debugTable, 0, 5, "Pending L/H", text_color=color.white, bgcolor=color.new(color.black, 0))
+        table.cell(debugTable, 1, 5, str.tostring(array.size(pendingLowSourceBars)) + " / " + str.tostring(array.size(pendingHighSourceBars)), text_color=color.white, bgcolor=color.new(color.black, 0))
+    else
+        table.cell(debugTable, 0, 0, "", bgcolor=color.new(color.black, 100))
+        table.cell(debugTable, 1, 0, "", bgcolor=color.new(color.black, 100))
+        table.cell(debugTable, 0, 1, "", bgcolor=color.new(color.black, 100))
+        table.cell(debugTable, 1, 1, "", bgcolor=color.new(color.black, 100))
+        table.cell(debugTable, 0, 2, "", bgcolor=color.new(color.black, 100))
+        table.cell(debugTable, 1, 2, "", bgcolor=color.new(color.black, 100))
+        table.cell(debugTable, 0, 3, "", bgcolor=color.new(color.black, 100))
+        table.cell(debugTable, 1, 3, "", bgcolor=color.new(color.black, 100))
+        table.cell(debugTable, 0, 4, "", bgcolor=color.new(color.black, 100))
+        table.cell(debugTable, 1, 4, "", bgcolor=color.new(color.black, 100))
+        table.cell(debugTable, 0, 5, "", bgcolor=color.new(color.black, 100))
+        table.cell(debugTable, 1, 5, "", bgcolor=color.new(color.black, 100))
