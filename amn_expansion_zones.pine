@@ -17,7 +17,8 @@ localPivotLen = input.int(3, "Local pivot length", minval = 1, group = groupStru
 leftScanBars = input.int(20, "Left scan bars", minval = 2, maxval = 200, group = groupStructure)
 internalShiftLookback = input.int(10, "Internal shift lookback", minval = 2, group = groupStructure)
 
-zoneExtendBars = input.int(100, "Zone extend bars", minval = 5, maxval = 1000, group = groupZones)
+// TradingView bar-index drawings can only extend 500 bars into the future.
+zoneExtendBars = input.int(100, "Zone extend bars", minval = 5, maxval = 500, group = groupZones)
 fibLevel = input.float(0.5, "Mitigation fib level", minval = 0.0, maxval = 1.0, step = 0.05, group = groupZones)
 showFib = input.bool(true, "Show fib lines", group = groupZones)
 showExtraFib = input.bool(true, "Show 0.3 / 0.7 fibs", group = groupZones)
@@ -165,6 +166,14 @@ var int expansionStartBar = na
 if biasChanged
     expansionDir := 0
     expansionStartBar := na
+    array.clear(bullCandidateSourceBars)
+    array.clear(bullCandidateTops)
+    array.clear(bullCandidateBots)
+    array.clear(bullCandidateSwingBars)
+    array.clear(bearCandidateSourceBars)
+    array.clear(bearCandidateTops)
+    array.clear(bearCandidateBots)
+    array.clear(bearCandidateSwingBars)
 
 bool bullInternalShiftEvent = barstate.isconfirmed and externalBias == 1 and expansionDir != 1 and not na(recentInternalHigh) and close > recentInternalHigh
 bool bearInternalShiftEvent = barstate.isconfirmed and externalBias == -1 and expansionDir != -1 and not na(recentInternalLow) and close < recentInternalLow
@@ -181,9 +190,6 @@ if bearInternalShiftEvent
 // Step 3: Valid low / valid high source discovery
 //------------------------------------------------------------------------------
 if barstate.isconfirmed and not na(swingLow)
-    int sourceOffset = na
-    float sourceTop = na
-    float sourceBot = na
     [sourceOffset, sourceTop, sourceBot, _] = f_find_bearish_source_from_swing(localPivotLen, leftScanBars)
     if not na(sourceOffset)
         int sourceBar = bar_index - sourceOffset
@@ -199,9 +205,6 @@ if barstate.isconfirmed and not na(swingLow)
                 label.new(x = swingBar, y = sourceBot, text = "Bull src\n" + str.tostring(sourceBar), xloc = xloc.bar_index, style = label.style_label_up, color = color.new(color.teal, 70), textcolor = color.white, size = size.tiny)
 
 if barstate.isconfirmed and not na(swingHigh)
-    int sourceOffset = na
-    float sourceTop = na
-    float sourceBot = na
     [sourceOffset, sourceTop, sourceBot, _] = f_find_bullish_source_from_swing(localPivotLen, leftScanBars)
     if not na(sourceOffset)
         int sourceBar = bar_index - sourceOffset

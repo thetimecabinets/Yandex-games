@@ -39,6 +39,10 @@ I also added:
 - `showExtraFib` for optional 0.3 and 0.7 lines
 - `sweepLookback` and `microLookback` for the optional entry confirmation logic
 
+Note:
+
+- `zoneExtendBars` is capped at `500` because TradingView drawing objects that use `xloc.bar_index` cannot be projected indefinitely into the future.
+
 ### 2) HTF bias engine
 
 The script uses `request.security()` to pull:
@@ -95,6 +99,8 @@ When it happens, the script stores:
 
 - `expansionDir`
 - `expansionStartBar`
+
+When HTF bias changes, pending valid-low and valid-high candidates are cleared so an old regime cannot confirm new zones after the directional framework has changed.
 
 ### 6) Expansion-only zone creation
 
