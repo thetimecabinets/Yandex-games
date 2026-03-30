@@ -497,14 +497,15 @@ if nMit > 0
 //  Toggle with the "Show Debug Info" input.
 // ══════════════════════════════════════════════════════════════════════════════
 
+var label _dbgLabel = na
+
 if i_debug
     string biasTxt = htfBias == 1 ? "BULL" : htfBias == -1 ? "BEAR" : "NEUTRAL"
     string expTxt  = expDir == 1 ? "EXP ↑" : expDir == -1 ? "EXP ↓" : "FLAT"
 
     if barstate.islast
-        var label dbgLabel = na
-        label.delete(dbgLabel)
-        dbgLabel := label.new(bar_index + 4, high,
+        label.delete(_dbgLabel)
+        _dbgLabel := label.new(bar_index + 4, high,
              "HTF: " + biasTxt + "\n" + expTxt,
              style=label.style_label_left,
              color=color.new(color.blue, 60),
