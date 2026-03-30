@@ -36,8 +36,9 @@ f_scanLowestBearishOffset(int _anchorOffset, int _maxLeftBars) =>
     float bestClose = na
     int bestOffset = na
     for look = _anchorOffset + 1 to _anchorOffset + _maxLeftBars
-        if look <= bar_index and close[look] < open[look]
-            if na(bestClose) or close[look] < bestClose
+        if look <= bar_index
+            bool isBear = close[look] < open[look]
+            if isBear and (na(bestClose) or close[look] < bestClose)
                 bestClose := close[look]
                 bestOffset := look
     bestOffset
@@ -46,8 +47,9 @@ f_scanHighestBullishOffset(int _anchorOffset, int _maxLeftBars) =>
     float bestClose = na
     int bestOffset = na
     for look = _anchorOffset + 1 to _anchorOffset + _maxLeftBars
-        if look <= bar_index and close[look] > open[look]
-            if na(bestClose) or close[look] > bestClose
+        if look <= bar_index
+            bool isBull = close[look] > open[look]
+            if isBull and (na(bestClose) or close[look] > bestClose)
                 bestClose := close[look]
                 bestOffset := look
     bestOffset
