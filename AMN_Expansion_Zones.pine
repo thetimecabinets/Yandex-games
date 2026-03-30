@@ -227,7 +227,8 @@ dbgBearInternalShift := bearShift
 //==================================================
 int pendingLowCount = array.size(pendingLowSourceBars)
 if pendingLowCount > 0
-    for i = pendingLowCount - 1 to 0 by -1
+    for rev = 0 to pendingLowCount - 1
+        int i = pendingLowCount - 1 - rev
         float srcTop = array.get(pendingLowTops, i)
         float srcBot = array.get(pendingLowBots, i)
         int srcBar = array.get(pendingLowSourceBars, i)
@@ -290,7 +291,8 @@ if pendingLowCount > 0
 
 int pendingHighCount = array.size(pendingHighSourceBars)
 if pendingHighCount > 0
-    for i = pendingHighCount - 1 to 0 by -1
+    for rev = 0 to pendingHighCount - 1
+        int i = pendingHighCount - 1 - rev
         float srcTop = array.get(pendingHighTops, i)
         float srcBot = array.get(pendingHighBots, i)
         int srcBar = array.get(pendingHighSourceBars, i)
