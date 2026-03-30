@@ -1,0 +1,556 @@
+// This Source Code is subject to the terms of the Mozilla Public License 2.0
+// AMN Expansion Zones — Multi-step market structure model
+// Built for Pine Script v5
+
+//@version=5
+indicator("AMN Expansion Zones", "AMN-EZ", overlay=true,
+     max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+string GRP_HTF = "══  Higher Timeframe Bias  ══"
+i_htfTF   = input.timeframe("D",  "HTF Timeframe",           group=GRP_HTF,
+     tooltip="Timeframe used to determine external directional bias via swing structure.")
+i_htfLen  = input.int(5,          "HTF Swing Length",         minval=1, maxval=50, group=GRP_HTF,
+     tooltip="Pivot lookback length on the HTF for detecting swing highs and lows.")
+
+string GRP_STR = "══  Structure Settings  ══"
+i_pivLen  = input.int(5,  "Local Pivot Length",       minval=1, maxval=50, group=GRP_STR,
+     tooltip="Lookback/lookforward length for local swing detection on the chart timeframe.")
+i_scanMax = input.int(20, "Left Scan Bars",           minval=3, maxval=100, group=GRP_STR,
+     tooltip="Maximum bars to scan LEFT from each swing point when searching for the source candle.")
+i_shiftLB = input.int(10, "Internal Shift Lookback",  minval=2, maxval=50, group=GRP_STR,
+     tooltip="Number of bars used to detect internal structure shift (breakout above/below recent range).")
+
+string GRP_ZN = "══  Zone Settings  ══"
+i_fibLvl  = input.float(0.5, "Mitigation Fib Level",  minval=0.1, maxval=0.9, step=0.1, group=GRP_ZN,
+     tooltip="The fib level within the zone that triggers mitigation when price touches it.")
+i_showFib = input.bool(true,  "Show 0.5 Fib Line",    group=GRP_ZN)
+i_show37  = input.bool(false, "Show 0.3 / 0.7 Fibs",  group=GRP_ZN)
+i_delMit  = input.bool(true,  "Delete Zone on Mitigation", group=GRP_ZN,
+     tooltip="If true, mitigated zones are removed. If false, they are grayed out.")
+
+string GRP_SIG = "══  Signals  ══"
+i_showSig = input.bool(true,  "Show BUY / SELL Labels",  group=GRP_SIG,
+     tooltip="Show entry labels when price sweeps liquidity inside a zone and shifts structure.")
+i_amnLbl  = input.bool(false, "Show AMN 1-2-3 Labels",   group=GRP_SIG,
+     tooltip="Label source candle (1), swing anchor (2), and confirmation bar (3).")
+
+string GRP_DBG = "══  Debug  ══"
+i_debug   = input.bool(false, "Show Debug Info", group=GRP_DBG,
+     tooltip="Display HTF bias, expansion direction, valid confirmations, and shift events.")
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PART 1 — HIGHER TIMEFRAME EXTERNAL BIAS
+//
+//  Uses request.security() to pull HTF swing structure.
+//  Determines directional framework:
+//    - bullish if HTF close > last confirmed HTF swing high
+//    - bearish if HTF close < last confirmed HTF swing low
+//    - otherwise retains previous bias
+//  This is the EXTERNAL directional filter for all zone creation.
+// ══════════════════════════════════════════════════════════════════════════════
+
+htfPH = request.security(syminfo.tickerid, i_htfTF, ta.pivothigh(high, i_htfLen, i_htfLen))
+htfPL = request.security(syminfo.tickerid, i_htfTF, ta.pivotlow(low, i_htfLen, i_htfLen))
+htfC  = request.security(syminfo.tickerid, i_htfTF, close)
+
+var float _htfH = na
+var float _htfL = na
+var int   htfBias = 0
+
+if not na(htfPH)
+    _htfH := htfPH
+if not na(htfPL)
+    _htfL := htfPL
+
+if not na(_htfH) and not na(htfC) and htfC > _htfH
+    htfBias := 1
+if not na(_htfL) and not na(htfC) and htfC < _htfL
+    htfBias := -1
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PART 2 — LOCAL SWING DETECTION
+//
+//  Simple pivot-based swings on the chart timeframe.
+//  These swings become the anchors for the valid low / valid high scan.
+//  ta.pivotlow/ta.pivothigh confirm L bars after the actual swing.
+// ══════════════════════════════════════════════════════════════════════════════
+
+pivH = ta.pivothigh(high, i_pivLen, i_pivLen)
+pivL = ta.pivotlow(low, i_pivLen, i_pivLen)
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PART 3 — VALID LOW / VALID HIGH — LEFT-SCAN LOGIC
+//
+//  VALID LOW (demand source):
+//    From a detected swing low, scan LEFT to find the LOWEST BEARISH candle
+//    by close (not wick). Zone = full range of that bearish candle.
+//    Confirmed when price closes ABOVE that candle's high.
+//
+//  VALID HIGH (supply source):
+//    From a detected swing high, scan LEFT to find the HIGHEST BULLISH candle
+//    by close (not wick). Zone = full range of that bullish candle.
+//    Confirmed when price closes BELOW that candle's low.
+//
+//  Proper left-scan from the swing anchor, not a shortcut like ta.valuewhen.
+// ══════════════════════════════════════════════════════════════════════════════
+
+findDemandSource(pivotOffset, maxScan) =>
+    float bestCl = na
+    float bestHi = na
+    float bestLo = na
+    int   bestBi = na
+    bool  ok     = false
+    int start = pivotOffset + 1
+    int stop  = math.min(pivotOffset + maxScan, bar_index)
+    if start <= stop
+        for j = start to stop
+            if close[j] < open[j]
+                if na(bestCl) or close[j] < bestCl
+                    bestCl := close[j]
+                    bestHi := high[j]
+                    bestLo := low[j]
+                    bestBi := bar_index - j
+                    ok     := true
+    [bestBi, bestHi, bestLo, ok]
+
+findSupplySource(pivotOffset, maxScan) =>
+    float bestCl = na
+    float bestHi = na
+    float bestLo = na
+    int   bestBi = na
+    bool  ok     = false
+    int start = pivotOffset + 1
+    int stop  = math.min(pivotOffset + maxScan, bar_index)
+    if start <= stop
+        for j = start to stop
+            if close[j] > open[j]
+                if na(bestCl) or close[j] > bestCl
+                    bestCl := close[j]
+                    bestHi := high[j]
+                    bestLo := low[j]
+                    bestBi := bar_index - j
+                    ok     := true
+    [bestBi, bestHi, bestLo, ok]
+
+// ── Pending valid low (demand) ──
+var float pVL_t   = na
+var float pVL_b   = na
+var int   pVL_src = na
+var int   pVL_sw  = na
+var float pVL_swP = na
+var bool  pVL_on  = false
+
+// ── Pending valid high (supply) ──
+var float pVH_t   = na
+var float pVH_b   = na
+var int   pVH_src = na
+var int   pVH_sw  = na
+var float pVH_swP = na
+var bool  pVH_on  = false
+
+if not na(pivL)
+    [bi, hi, lo, ok] = findDemandSource(i_pivLen, i_scanMax)
+    if ok
+        pVL_t   := hi
+        pVL_b   := lo
+        pVL_src := bi
+        pVL_sw  := bar_index - i_pivLen
+        pVL_swP := pivL
+        pVL_on  := true
+    else
+        pVL_on := false
+
+if not na(pivH)
+    [bi, hi, lo, ok] = findSupplySource(i_pivLen, i_scanMax)
+    if ok
+        pVH_t   := hi
+        pVH_b   := lo
+        pVH_src := bi
+        pVH_sw  := bar_index - i_pivLen
+        pVH_swP := pivH
+        pVH_on  := true
+    else
+        pVH_on := false
+
+bool vlOK = pVL_on and close > pVL_t
+bool vhOK = pVH_on and close < pVH_b
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PART 4 — INTERNAL STRUCTURE SHIFT
+//
+//  Detects when the pullback phase is over and expansion begins.
+//  Bullish shift: close breaks above recent internal structure high.
+//  Bearish shift: close breaks below recent internal structure low.
+//  Only fires when aligned with HTF external bias.
+//  Resets if HTF bias flips against the current expansion direction.
+// ══════════════════════════════════════════════════════════════════════════════
+
+var int expDir = 0
+
+bool brkUp = close > ta.highest(high[1], i_shiftLB)
+bool brkDn = close < ta.lowest(low[1], i_shiftLB)
+
+if htfBias == 1 and brkUp
+    expDir := 1
+if htfBias == -1 and brkDn
+    expDir := -1
+if htfBias == 1 and expDir == -1
+    expDir := 0
+if htfBias == -1 and expDir == 1
+    expDir := 0
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PARTS 5–7 — ZONE ARRAYS, CREATION, MITIGATION, AND MANAGEMENT
+//
+//  Parallel arrays track every zone's state: box, fib lines, price levels,
+//  direction, creation bar, source bar, active flag, and signal flag.
+//
+//  Zone creation requires ALL of:
+//    - External HTF bias matches direction
+//    - Internal expansion direction matches
+//    - Valid low / valid high has been confirmed
+//    - Source candle is not already used by an existing zone
+//
+//  Mitigation: zone deactivated when price touches the configurable fib level
+//  (default 50%). Only evaluated on bars AFTER zone creation.
+//
+//  Supports multiple concurrent expansion zones in sequence.
+// ══════════════════════════════════════════════════════════════════════════════
+
+var array<box>   zBox = array.new<box>()
+var array<line>  zF5  = array.new<line>()
+var array<line>  zF3  = array.new<line>()
+var array<line>  zF7  = array.new<line>()
+var array<float> zTop = array.new<float>()
+var array<float> zBot = array.new<float>()
+var array<int>   zDir = array.new<int>()
+var array<int>   zBar = array.new<int>()
+var array<int>   zSrc = array.new<int>()
+var array<bool>  zAct = array.new<bool>()
+var array<bool>  zSig = array.new<bool>()
+
+hasSrc(sb, dr) =>
+    bool dup = false
+    int n = array.size(zSrc)
+    if n > 0
+        for k = 0 to n - 1
+            if array.get(zSrc, k) == sb and array.get(zDir, k) == dr
+                dup := true
+                break
+    dup
+
+TEAL = #26a69a
+RED  = #ef5350
+
+// ── Pre-compute sweep detection values (must live at global scope for ta.* functions) ──
+float _recentLow3  = ta.lowest(low[1], 3)
+float _recentHigh3 = ta.highest(high[1], 3)
+
+// ── Track signals at global scope for alertcondition ──
+var bool _anySigBuy  = false
+var bool _anySigSell = false
+_anySigBuy  := false
+_anySigSell := false
+
+// ───────────────────────────────────────────────────────
+//  BULLISH DEMAND ZONE CREATION
+// ───────────────────────────────────────────────────────
+bool wantBull = vlOK and htfBias == 1 and expDir == 1
+bool makeBull = wantBull and not na(pVL_src) and not hasSrc(pVL_src, 1)
+
+if wantBull
+    if makeBull
+        float zt = pVL_t
+        float zb = pVL_b
+        float m5 = zb + (zt - zb) * i_fibLvl
+        float m3 = zb + (zt - zb) * 0.3
+        float m7 = zb + (zt - zb) * 0.7
+
+        newBox = box.new(bar_index, zt, bar_index + 1, zb,
+             bgcolor=color.new(TEAL, 83), border_color=color.new(TEAL, 50),
+             border_width=1, extend=extend.right)
+        newL5 = line.new(bar_index, m5, bar_index + 1, m5,
+             color=i_showFib ? color.new(TEAL, 25) : na,
+             style=line.style_dashed, width=1, extend=extend.right)
+        newL3 = line.new(bar_index, m3, bar_index + 1, m3,
+             color=(i_showFib and i_show37) ? color.new(TEAL, 50) : na,
+             style=line.style_dotted, width=1, extend=extend.right)
+        newL7 = line.new(bar_index, m7, bar_index + 1, m7,
+             color=(i_showFib and i_show37) ? color.new(TEAL, 50) : na,
+             style=line.style_dotted, width=1, extend=extend.right)
+
+        array.push(zBox, newBox)
+        array.push(zF5, newL5)
+        array.push(zF3, newL3)
+        array.push(zF7, newL7)
+        array.push(zTop, zt)
+        array.push(zBot, zb)
+        array.push(zDir, 1)
+        array.push(zBar, bar_index)
+        array.push(zSrc, pVL_src)
+        array.push(zAct, true)
+        array.push(zSig, false)
+
+        if i_amnLbl
+            label.new(pVL_src, pVL_b, "1",
+                 style=label.style_label_up, color=TEAL,
+                 textcolor=color.white, size=size.tiny)
+            label.new(pVL_sw, pVL_swP, "2",
+                 style=label.style_label_up, color=color.new(TEAL, 35),
+                 textcolor=color.white, size=size.tiny)
+            label.new(bar_index, close, "3",
+                 style=label.style_label_down, color=color.new(TEAL, 20),
+                 textcolor=color.white, size=size.tiny)
+
+    pVL_on := false
+
+
+// ───────────────────────────────────────────────────────
+//  BEARISH SUPPLY ZONE CREATION
+// ───────────────────────────────────────────────────────
+bool wantBear = vhOK and htfBias == -1 and expDir == -1
+bool makeBear = wantBear and not na(pVH_src) and not hasSrc(pVH_src, -1)
+
+if wantBear
+    if makeBear
+        float zt = pVH_t
+        float zb = pVH_b
+        float m5 = zb + (zt - zb) * i_fibLvl
+        float m3 = zb + (zt - zb) * 0.3
+        float m7 = zb + (zt - zb) * 0.7
+
+        newBox = box.new(bar_index, zt, bar_index + 1, zb,
+             bgcolor=color.new(RED, 85), border_color=color.new(RED, 50),
+             border_width=1, extend=extend.right)
+        newL5 = line.new(bar_index, m5, bar_index + 1, m5,
+             color=i_showFib ? color.new(RED, 25) : na,
+             style=line.style_dashed, width=1, extend=extend.right)
+        newL3 = line.new(bar_index, m3, bar_index + 1, m3,
+             color=(i_showFib and i_show37) ? color.new(RED, 50) : na,
+             style=line.style_dotted, width=1, extend=extend.right)
+        newL7 = line.new(bar_index, m7, bar_index + 1, m7,
+             color=(i_showFib and i_show37) ? color.new(RED, 50) : na,
+             style=line.style_dotted, width=1, extend=extend.right)
+
+        array.push(zBox, newBox)
+        array.push(zF5, newL5)
+        array.push(zF3, newL3)
+        array.push(zF7, newL7)
+        array.push(zTop, zt)
+        array.push(zBot, zb)
+        array.push(zDir, -1)
+        array.push(zBar, bar_index)
+        array.push(zSrc, pVH_src)
+        array.push(zAct, true)
+        array.push(zSig, false)
+
+        if i_amnLbl
+            label.new(pVH_src, pVH_t, "1",
+                 style=label.style_label_down, color=RED,
+                 textcolor=color.white, size=size.tiny)
+            label.new(pVH_sw, pVH_swP, "2",
+                 style=label.style_label_down, color=color.new(RED, 35),
+                 textcolor=color.white, size=size.tiny)
+            label.new(bar_index, close, "3",
+                 style=label.style_label_up, color=color.new(RED, 20),
+                 textcolor=color.white, size=size.tiny)
+
+    pVH_on := false
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PART 8 — SWEEP + MSS ENTRY SIGNALS
+//
+//  Processed BEFORE mitigation so a signal can still fire on the bar
+//  where the zone gets mitigated.
+//
+//  Bullish entry:
+//    - Bar's low enters the demand zone
+//    - Sweeps below recent lows (liquidity grab)
+//    - Closes bullish, above previous bar's high (market structure shift)
+//
+//  Bearish entry:
+//    - Bar's high enters the supply zone
+//    - Sweeps above recent highs (liquidity grab)
+//    - Closes bearish, below previous bar's low (market structure shift)
+//
+//  Each zone only emits one signal (tracked by zSig array).
+// ══════════════════════════════════════════════════════════════════════════════
+
+if i_showSig
+    int nSig = array.size(zAct)
+    if nSig > 0
+        for i = 0 to nSig - 1
+            if not array.get(zAct, i) or array.get(zSig, i)
+                continue
+            float zt = array.get(zTop, i)
+            float zb = array.get(zBot, i)
+            int   dr = array.get(zDir, i)
+            int   sb = array.get(zBar, i)
+            if bar_index <= sb + 2
+                continue
+
+            if dr == 1
+                bool touch = low <= zt and close >= zb
+                bool sweep = low < _recentLow3
+                bool mss   = close > open and close > high[1]
+                if touch and sweep and mss
+                    label.new(bar_index, low, "BUY",
+                         style=label.style_label_up, color=TEAL,
+                         textcolor=color.white, size=size.small)
+                    array.set(zSig, i, true)
+                    _anySigBuy := true
+
+            if dr == -1
+                bool touch = high >= zb and close <= zt
+                bool sweep = high > _recentHigh3
+                bool mss   = close < open and close < low[1]
+                if touch and sweep and mss
+                    label.new(bar_index, high, "SELL",
+                         style=label.style_label_down, color=RED,
+                         textcolor=color.white, size=size.small)
+                    array.set(zSig, i, true)
+                    _anySigSell := true
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MITIGATION CHECK
+//
+//  Iterates through all active zones on every bar.
+//  A zone is mitigated when price touches its internal fib level:
+//    - Bullish zone: low <= fib level (price drops into zone)
+//    - Bearish zone: high >= fib level (price rises into zone)
+//
+//  Mitigated zones are either deleted or grayed out based on user setting.
+//  Only evaluates bars AFTER zone creation to prevent same-bar mitigation.
+// ══════════════════════════════════════════════════════════════════════════════
+
+int nMit = array.size(zAct)
+if nMit > 0
+    for i = nMit - 1 to 0
+        if not array.get(zAct, i)
+            continue
+        float zt  = array.get(zTop, i)
+        float zb  = array.get(zBot, i)
+        int   dr  = array.get(zDir, i)
+        int   sb  = array.get(zBar, i)
+        float mid = zb + (zt - zb) * i_fibLvl
+
+        if bar_index <= sb
+            continue
+
+        bool mit = (dr == 1 and low <= mid) or (dr == -1 and high >= mid)
+        if mit
+            array.set(zAct, i, false)
+
+            thisBox = array.get(zBox, i)
+            box.set_extend(thisBox, extend.none)
+            box.set_right(thisBox, bar_index)
+
+            ln5 = array.get(zF5, i)
+            line.set_extend(ln5, extend.none)
+            line.set_x2(ln5, bar_index)
+
+            ln3 = array.get(zF3, i)
+            line.set_extend(ln3, extend.none)
+            line.set_x2(ln3, bar_index)
+
+            ln7 = array.get(zF7, i)
+            line.set_extend(ln7, extend.none)
+            line.set_x2(ln7, bar_index)
+
+            if i_delMit
+                box.delete(thisBox)
+                line.delete(ln5)
+                line.delete(ln3)
+                line.delete(ln7)
+            else
+                box.set_bgcolor(thisBox, color.new(color.gray, 92))
+                box.set_border_color(thisBox, color.new(color.gray, 78))
+                line.set_color(ln5, color.new(color.gray, 65))
+                line.set_color(ln3, color.new(color.gray, 78))
+                line.set_color(ln7, color.new(color.gray, 78))
+
+            if i_debug
+                label.new(bar_index, mid, "MIT",
+                     style=dr == 1 ? label.style_label_up : label.style_label_down,
+                     color=color.new(color.gray, 40),
+                     textcolor=color.white, size=size.tiny)
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PART 13 — DEBUG OUTPUT
+//
+//  Shows HTF bias and expansion direction on the last bar.
+//  Marks valid low/high confirmations, internal shift events,
+//  and mitigation events with small labels throughout the chart.
+//  Toggle with the "Show Debug Info" input.
+// ══════════════════════════════════════════════════════════════════════════════
+
+if i_debug
+    string biasTxt = htfBias == 1 ? "BULL" : htfBias == -1 ? "BEAR" : "NEUTRAL"
+    string expTxt  = expDir == 1 ? "EXP ↑" : expDir == -1 ? "EXP ↓" : "FLAT"
+
+    if barstate.islast
+        var label dbgLabel = na
+        label.delete(dbgLabel)
+        dbgLabel := label.new(bar_index + 4, high,
+             "HTF: " + biasTxt + "\n" + expTxt,
+             style=label.style_label_left,
+             color=color.new(color.blue, 60),
+             textcolor=color.white, size=size.normal)
+
+    if vlOK
+        label.new(bar_index, low, "VL✓",
+             style=label.style_label_up,
+             color=color.new(color.green, 50),
+             textcolor=color.white, size=size.tiny)
+
+    if vhOK
+        label.new(bar_index, high, "VH✓",
+             style=label.style_label_down,
+             color=color.new(color.red, 50),
+             textcolor=color.white, size=size.tiny)
+
+    if brkUp and htfBias == 1
+        label.new(bar_index, low, "SHIFT↑",
+             style=label.style_label_up,
+             color=color.new(TEAL, 55),
+             textcolor=color.white, size=size.tiny)
+
+    if brkDn and htfBias == -1
+        label.new(bar_index, high, "SHIFT↓",
+             style=label.style_label_down,
+             color=color.new(color.orange, 55),
+             textcolor=color.white, size=size.tiny)
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  VISUAL — HTF BIAS BACKGROUND TINT
+// ══════════════════════════════════════════════════════════════════════════════
+
+bgcolor(htfBias == 1  ? color.new(TEAL, 95) :
+     htfBias == -1 ? color.new(RED, 95)  : na,
+     title="HTF Bias Background")
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ALERT CONDITIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(makeBull,     "Demand Zone Created", "AMN: New bullish demand zone formed")
+alertcondition(makeBear,     "Supply Zone Created", "AMN: New bearish supply zone formed")
+alertcondition(_anySigBuy,   "Buy Entry Signal",    "AMN: Buy entry — sweep + MSS in demand zone")
+alertcondition(_anySigSell,  "Sell Entry Signal",   "AMN: Sell entry — sweep + MSS in supply zone")
+alertcondition(brkUp and htfBias == 1, "Bullish Internal Shift", "AMN: Internal structure shift bullish")
+alertcondition(brkDn and htfBias == -1, "Bearish Internal Shift", "AMN: Internal structure shift bearish")
