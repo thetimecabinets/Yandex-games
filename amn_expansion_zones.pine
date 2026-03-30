@@ -1,0 +1,494 @@
+//@version=5
+indicator("AMN Expansion Zones", overlay=true, max_boxes_count=200, max_lines_count=600, max_labels_count=500)
+
+// -----------------------------------------------------------------------------
+// Inputs
+// -----------------------------------------------------------------------------
+groupFramework = "1. Framework"
+htfTimeframe = input.timeframe("240", "HTF Timeframe", group=groupFramework)
+htfSwingLen = input.int(3, "HTF Swing Length", minval=1, group=groupFramework)
+localPivotLen = input.int(3, "Local Pivot Length", minval=1, group=groupFramework)
+leftScanBars = input.int(20, "Left Scan Bars", minval=1, maxval=200, group=groupFramework)
+internalShiftLookback = input.int(10, "Internal Shift Lookback", minval=2, group=groupFramework)
+
+groupZones = "2. Zone Controls"
+zoneExtendBars = input.int(50, "Zone Extend Bars", minval=1, maxval=500, group=groupZones)
+fibLevel = input.float(0.50, "Mitigation / Main Fib Level", minval=0.05, maxval=0.95, step=0.05, group=groupZones)
+showFib = input.bool(true, "Show Main Fib Line", group=groupZones)
+showExtraFib = input.bool(true, "Show 0.30 / 0.70 Fib Lines", group=groupZones)
+deleteOnMitigation = input.bool(true, "Delete Zone On Mitigation", group=groupZones)
+
+groupSignals = "3. Signals"
+showSignals = input.bool(true, "Show Sweep + MSS Signals", group=groupSignals)
+entrySweepLookback = input.int(5, "Signal Sweep Lookback", minval=2, maxval=50, group=groupSignals)
+
+groupDebug = "4. Debug"
+showDebug = input.bool(false, "Show Debug Labels / Table", group=groupDebug)
+
+// -----------------------------------------------------------------------------
+// Helper functions
+// -----------------------------------------------------------------------------
+f_bias_text(int bias) =>
+    bias == 1 ? "Bullish" : bias == -1 ? "Bearish" : "Neutral"
+
+f_find_bearish_source_for_valid_low(int swingOffset, int maxScanBars) =>
+    float bestClose = na
+    int bestOffset = na
+    float sourceHigh = na
+    float sourceLow = na
+    for i = swingOffset + 1 to swingOffset + maxScanBars
+        if not na(close[i]) and close[i] < open[i]
+            bool better = na(bestClose) or close[i] < bestClose or (close[i] == bestClose and (na(bestOffset) or i < bestOffset))
+            if better
+                bestClose := close[i]
+                bestOffset := i
+                sourceHigh := high[i]
+                sourceLow := low[i]
+    [not na(bestOffset), bestOffset, sourceHigh, sourceLow]
+
+f_find_bullish_source_for_valid_high(int swingOffset, int maxScanBars) =>
+    float bestClose = na
+    int bestOffset = na
+    float sourceHigh = na
+    float sourceLow = na
+    for i = swingOffset + 1 to swingOffset + maxScanBars
+        if not na(close[i]) and close[i] > open[i]
+            bool better = na(bestClose) or close[i] > bestClose or (close[i] == bestClose and (na(bestOffset) or i < bestOffset))
+            if better
+                bestClose := close[i]
+                bestOffset := i
+                sourceHigh := high[i]
+                sourceLow := low[i]
+    [not na(bestOffset), bestOffset, sourceHigh, sourceLow]
+
+f_zone_level(float zoneTop, float zoneBot, float level) =>
+    zoneBot + (zoneTop - zoneBot) * level
+
+// -----------------------------------------------------------------------------
+// Persistent state
+// -----------------------------------------------------------------------------
+var float lastHtfSwingHigh = na
+var float lastHtfSwingLow = na
+var int externalBias = 0
+var int expansionDir = 0
+
+var array<int> pendingDir = array.new_int()
+var array<float> pendingTop = array.new_float()
+var array<float> pendingBot = array.new_float()
+var array<float> pendingTrigger = array.new_float()
+var array<int> pendingSourceBar = array.new_int()
+var array<int> pendingPivotBar = array.new_int()
+var array<bool> pendingActive = array.new_bool()
+
+var array<box> zoneBoxes = array.new_box()
+var array<line> zoneMidLines = array.new_line()
+var array<line> zoneFib30Lines = array.new_line()
+var array<line> zoneFib70Lines = array.new_line()
+var array<float> zoneTopArr = array.new_float()
+var array<float> zoneBotArr = array.new_float()
+var array<float> zoneMidArr = array.new_float()
+var array<int> zoneDirArr = array.new_int()
+var array<int> zoneCreateBarArr = array.new_int()
+var array<int> zoneRightBarArr = array.new_int()
+var array<int> zoneSourceBarArr = array.new_int()
+var array<bool> zoneActiveArr = array.new_bool()
+var array<int> zoneEntryStateArr = array.new_int()
+var array<float> zoneEntryTriggerArr = array.new_float()
+var array<bool> zoneEntrySignaledArr = array.new_bool()
+
+var table debugTable = table.new(position.top_right, 2, 5, border_width=1)
+
+// -----------------------------------------------------------------------------
+// Step 1: Higher timeframe external bias engine
+// -----------------------------------------------------------------------------
+htfPivotHigh = request.security(syminfo.tickerid, htfTimeframe, ta.pivothigh(high, htfSwingLen, htfSwingLen), lookahead=barmerge.lookahead_off)
+htfPivotLow = request.security(syminfo.tickerid, htfTimeframe, ta.pivotlow(low, htfSwingLen, htfSwingLen), lookahead=barmerge.lookahead_off)
+htfClose = request.security(syminfo.tickerid, htfTimeframe, close, lookahead=barmerge.lookahead_off)
+
+if not na(htfPivotHigh)
+    lastHtfSwingHigh := htfPivotHigh
+if not na(htfPivotLow)
+    lastHtfSwingLow := htfPivotLow
+
+int priorExternalBias = nz(externalBias[1], 0)
+if not na(lastHtfSwingHigh) and htfClose > lastHtfSwingHigh
+    externalBias := 1
+else if not na(lastHtfSwingLow) and htfClose < lastHtfSwingLow
+    externalBias := -1
+else
+    externalBias := nz(externalBias[1], 0)
+
+// -----------------------------------------------------------------------------
+// Step 2 + 4: Local swings and internal structure shift
+// -----------------------------------------------------------------------------
+pivotLowPrice = ta.pivotlow(low, localPivotLen, localPivotLen)
+pivotHighPrice = ta.pivothigh(high, localPivotLen, localPivotLen)
+
+recentInternalHigh = ta.highest(high[1], internalShiftLookback)
+recentInternalLow = ta.lowest(low[1], internalShiftLookback)
+
+bool bullishInternalShift = externalBias == 1 and not na(recentInternalHigh) and close > recentInternalHigh
+bool bearishInternalShift = externalBias == -1 and not na(recentInternalLow) and close < recentInternalLow
+
+if externalBias == 0
+    expansionDir := 0
+else if externalBias != priorExternalBias and externalBias != expansionDir
+    expansionDir := 0
+
+if bullishInternalShift
+    expansionDir := 1
+else if bearishInternalShift
+    expansionDir := -1
+
+// -----------------------------------------------------------------------------
+// Step 3: Valid low / valid high candidate discovery with left-scan logic
+// -----------------------------------------------------------------------------
+if not na(pivotLowPrice)
+    int swingBar = bar_index - localPivotLen
+    [foundBullSource, bullSourceOffset, bullSourceHigh, bullSourceLow] = f_find_bearish_source_for_valid_low(localPivotLen, leftScanBars)
+    if foundBullSource
+        int sourceBar = bar_index - bullSourceOffset
+        bool alreadyConfirmed = ta.highest(close, localPivotLen) > bullSourceHigh
+        bool duplicateSource = false
+        int pendingCount = array.size(pendingSourceBar)
+        if pendingCount > 0
+            for i = 0 to pendingCount - 1
+                if array.get(pendingActive, i) and array.get(pendingDir, i) == 1 and array.get(pendingSourceBar, i) == sourceBar
+                    duplicateSource := true
+        int existingZoneCount = array.size(zoneSourceBarArr)
+        if not duplicateSource and existingZoneCount > 0
+            for i = 0 to existingZoneCount - 1
+                if array.get(zoneDirArr, i) == 1 and array.get(zoneSourceBarArr, i) == sourceBar
+                    duplicateSource := true
+        if not duplicateSource
+            array.push(pendingDir, 1)
+            array.push(pendingTop, bullSourceHigh)
+            array.push(pendingBot, bullSourceLow)
+            array.push(pendingTrigger, bullSourceHigh)
+            array.push(pendingSourceBar, sourceBar)
+            array.push(pendingPivotBar, swingBar)
+            array.push(pendingActive, not alreadyConfirmed)
+
+            if alreadyConfirmed
+                string sourceText = "Valid Low"
+                color sourceColor = color.new(color.teal, 0)
+                labelStyle = label.style_label_up
+
+                if showDebug
+                    label.new(sourceBar, bullSourceLow, sourceText + " src\nbar " + str.tostring(sourceBar), xloc=xloc.bar_index, style=labelStyle, color=color.new(sourceColor, 65), textcolor=color.white, size=size.tiny)
+                    label.new(bar_index, close, sourceText + " confirmed", xloc=xloc.bar_index, style=labelStyle, color=color.new(sourceColor, 75), textcolor=color.white, size=size.tiny)
+
+                if externalBias == 1 and expansionDir == 1
+                    bool zoneExists = false
+                    if array.size(zoneSourceBarArr) > 0
+                        for z = 0 to array.size(zoneSourceBarArr) - 1
+                            if array.get(zoneDirArr, z) == 1 and array.get(zoneSourceBarArr, z) == sourceBar
+                                zoneExists := true
+
+                    if not zoneExists
+                        int creationBar = bar_index
+                        int rightEdge = bar_index + zoneExtendBars
+                        float zoneMid = f_zone_level(bullSourceHigh, bullSourceLow, fibLevel)
+                        float zoneFib30 = f_zone_level(bullSourceHigh, bullSourceLow, 0.30)
+                        float zoneFib70 = f_zone_level(bullSourceHigh, bullSourceLow, 0.70)
+                        color zoneColor = color.teal
+
+                        box zoneBox = box.new(left=sourceBar, top=bullSourceHigh, right=rightEdge, bottom=bullSourceLow, xloc=xloc.bar_index, border_color=color.new(zoneColor, 0), bgcolor=color.new(zoneColor, 82))
+                        line zoneMidLine = na
+                        line zoneFib30Line = na
+                        line zoneFib70Line = na
+
+                        if showFib
+                            zoneMidLine := line.new(sourceBar, zoneMid, rightEdge, zoneMid, xloc=xloc.bar_index, color=color.new(zoneColor, 5), style=line.style_dashed, width=2)
+                            if showExtraFib
+                                zoneFib30Line := line.new(sourceBar, zoneFib30, rightEdge, zoneFib30, xloc=xloc.bar_index, color=color.new(zoneColor, 40), style=line.style_dashed, width=1)
+                                zoneFib70Line := line.new(sourceBar, zoneFib70, rightEdge, zoneFib70, xloc=xloc.bar_index, color=color.new(zoneColor, 40), style=line.style_dashed, width=1)
+
+                        array.push(zoneBoxes, zoneBox)
+                        array.push(zoneMidLines, zoneMidLine)
+                        array.push(zoneFib30Lines, zoneFib30Line)
+                        array.push(zoneFib70Lines, zoneFib70Line)
+                        array.push(zoneTopArr, bullSourceHigh)
+                        array.push(zoneBotArr, bullSourceLow)
+                        array.push(zoneMidArr, zoneMid)
+                        array.push(zoneDirArr, 1)
+                        array.push(zoneCreateBarArr, creationBar)
+                        array.push(zoneRightBarArr, rightEdge)
+                        array.push(zoneSourceBarArr, sourceBar)
+                        array.push(zoneActiveArr, true)
+                        array.push(zoneEntryStateArr, 0)
+                        array.push(zoneEntryTriggerArr, na)
+                        array.push(zoneEntrySignaledArr, false)
+
+                        if showDebug
+                            label.new(bar_index, low, "Bull Expansion Zone", xloc=xloc.bar_index, style=labelStyle, color=color.new(zoneColor, 78), textcolor=color.white, size=size.tiny)
+
+if not na(pivotHighPrice)
+    int swingBar = bar_index - localPivotLen
+    [foundBearSource, bearSourceOffset, bearSourceHigh, bearSourceLow] = f_find_bullish_source_for_valid_high(localPivotLen, leftScanBars)
+    if foundBearSource
+        int sourceBar = bar_index - bearSourceOffset
+        bool alreadyConfirmed = ta.lowest(close, localPivotLen) < bearSourceLow
+        bool duplicateSource = false
+        int pendingCount = array.size(pendingSourceBar)
+        if pendingCount > 0
+            for i = 0 to pendingCount - 1
+                if array.get(pendingActive, i) and array.get(pendingDir, i) == -1 and array.get(pendingSourceBar, i) == sourceBar
+                    duplicateSource := true
+        int existingZoneCount = array.size(zoneSourceBarArr)
+        if not duplicateSource and existingZoneCount > 0
+            for i = 0 to existingZoneCount - 1
+                if array.get(zoneDirArr, i) == -1 and array.get(zoneSourceBarArr, i) == sourceBar
+                    duplicateSource := true
+        if not duplicateSource
+            array.push(pendingDir, -1)
+            array.push(pendingTop, bearSourceHigh)
+            array.push(pendingBot, bearSourceLow)
+            array.push(pendingTrigger, bearSourceLow)
+            array.push(pendingSourceBar, sourceBar)
+            array.push(pendingPivotBar, swingBar)
+            array.push(pendingActive, not alreadyConfirmed)
+
+            if alreadyConfirmed
+                string sourceText = "Valid High"
+                color sourceColor = color.new(color.red, 0)
+                labelStyle = label.style_label_down
+
+                if showDebug
+                    label.new(sourceBar, bearSourceHigh, sourceText + " src\nbar " + str.tostring(sourceBar), xloc=xloc.bar_index, style=labelStyle, color=color.new(sourceColor, 65), textcolor=color.white, size=size.tiny)
+                    label.new(bar_index, close, sourceText + " confirmed", xloc=xloc.bar_index, style=labelStyle, color=color.new(sourceColor, 75), textcolor=color.white, size=size.tiny)
+
+                if externalBias == -1 and expansionDir == -1
+                    bool zoneExists = false
+                    if array.size(zoneSourceBarArr) > 0
+                        for z = 0 to array.size(zoneSourceBarArr) - 1
+                            if array.get(zoneDirArr, z) == -1 and array.get(zoneSourceBarArr, z) == sourceBar
+                                zoneExists := true
+
+                    if not zoneExists
+                        int creationBar = bar_index
+                        int rightEdge = bar_index + zoneExtendBars
+                        float zoneMid = f_zone_level(bearSourceHigh, bearSourceLow, fibLevel)
+                        float zoneFib30 = f_zone_level(bearSourceHigh, bearSourceLow, 0.30)
+                        float zoneFib70 = f_zone_level(bearSourceHigh, bearSourceLow, 0.70)
+                        color zoneColor = color.red
+
+                        box zoneBox = box.new(left=sourceBar, top=bearSourceHigh, right=rightEdge, bottom=bearSourceLow, xloc=xloc.bar_index, border_color=color.new(zoneColor, 0), bgcolor=color.new(zoneColor, 82))
+                        line zoneMidLine = na
+                        line zoneFib30Line = na
+                        line zoneFib70Line = na
+
+                        if showFib
+                            zoneMidLine := line.new(sourceBar, zoneMid, rightEdge, zoneMid, xloc=xloc.bar_index, color=color.new(zoneColor, 5), style=line.style_dashed, width=2)
+                            if showExtraFib
+                                zoneFib30Line := line.new(sourceBar, zoneFib30, rightEdge, zoneFib30, xloc=xloc.bar_index, color=color.new(zoneColor, 40), style=line.style_dashed, width=1)
+                                zoneFib70Line := line.new(sourceBar, zoneFib70, rightEdge, zoneFib70, xloc=xloc.bar_index, color=color.new(zoneColor, 40), style=line.style_dashed, width=1)
+
+                        array.push(zoneBoxes, zoneBox)
+                        array.push(zoneMidLines, zoneMidLine)
+                        array.push(zoneFib30Lines, zoneFib30Line)
+                        array.push(zoneFib70Lines, zoneFib70Line)
+                        array.push(zoneTopArr, bearSourceHigh)
+                        array.push(zoneBotArr, bearSourceLow)
+                        array.push(zoneMidArr, zoneMid)
+                        array.push(zoneDirArr, -1)
+                        array.push(zoneCreateBarArr, creationBar)
+                        array.push(zoneRightBarArr, rightEdge)
+                        array.push(zoneSourceBarArr, sourceBar)
+                        array.push(zoneActiveArr, true)
+                        array.push(zoneEntryStateArr, 0)
+                        array.push(zoneEntryTriggerArr, na)
+                        array.push(zoneEntrySignaledArr, false)
+
+                        if showDebug
+                            label.new(bar_index, high, "Bear Expansion Zone", xloc=xloc.bar_index, style=labelStyle, color=color.new(zoneColor, 78), textcolor=color.white, size=size.tiny)
+
+// -----------------------------------------------------------------------------
+// Step 5 + 6 + 7: Confirmation, expansion-only zone creation, fibs, arrays
+// -----------------------------------------------------------------------------
+if array.size(pendingDir) > 0
+    for i = 0 to array.size(pendingDir) - 1
+        if array.get(pendingActive, i)
+            int candidateDir = array.get(pendingDir, i)
+            float triggerLevel = array.get(pendingTrigger, i)
+            bool isConfirmed = candidateDir == 1 ? close > triggerLevel : close < triggerLevel
+            if isConfirmed
+                array.set(pendingActive, i, false)
+                float zoneTop = array.get(pendingTop, i)
+                float zoneBot = array.get(pendingBot, i)
+                int sourceBar = array.get(pendingSourceBar, i)
+                string sourceText = candidateDir == 1 ? "Valid Low" : "Valid High"
+                color sourceColor = candidateDir == 1 ? color.new(color.teal, 0) : color.new(color.red, 0)
+                labelStyle = candidateDir == 1 ? label.style_label_up : label.style_label_down
+
+                if showDebug
+                    float sourceY = candidateDir == 1 ? zoneBot : zoneTop
+                    label.new(sourceBar, sourceY, sourceText + " src\nbar " + str.tostring(sourceBar), xloc=xloc.bar_index, style=labelStyle, color=color.new(sourceColor, 65), textcolor=color.white, size=size.tiny)
+                    label.new(bar_index, close, sourceText + " confirmed", xloc=xloc.bar_index, style=labelStyle, color=color.new(sourceColor, 75), textcolor=color.white, size=size.tiny)
+
+                if externalBias == candidateDir and expansionDir == candidateDir
+                    bool zoneExists = false
+                    if array.size(zoneSourceBarArr) > 0
+                        for z = 0 to array.size(zoneSourceBarArr) - 1
+                            if array.get(zoneDirArr, z) == candidateDir and array.get(zoneSourceBarArr, z) == sourceBar
+                                zoneExists := true
+
+                    if not zoneExists
+                        int creationBar = bar_index
+                        int rightEdge = bar_index + zoneExtendBars
+                        float zoneMid = f_zone_level(zoneTop, zoneBot, fibLevel)
+                        float zoneFib30 = f_zone_level(zoneTop, zoneBot, 0.30)
+                        float zoneFib70 = f_zone_level(zoneTop, zoneBot, 0.70)
+                        color zoneColor = candidateDir == 1 ? color.teal : color.red
+
+                        box zoneBox = box.new(left=sourceBar, top=zoneTop, right=rightEdge, bottom=zoneBot, xloc=xloc.bar_index, border_color=color.new(zoneColor, 0), bgcolor=color.new(zoneColor, 82))
+                        line zoneMidLine = na
+                        line zoneFib30Line = na
+                        line zoneFib70Line = na
+
+                        if showFib
+                            zoneMidLine := line.new(sourceBar, zoneMid, rightEdge, zoneMid, xloc=xloc.bar_index, color=color.new(zoneColor, 5), style=line.style_dashed, width=2)
+                            if showExtraFib
+                                zoneFib30Line := line.new(sourceBar, zoneFib30, rightEdge, zoneFib30, xloc=xloc.bar_index, color=color.new(zoneColor, 40), style=line.style_dashed, width=1)
+                                zoneFib70Line := line.new(sourceBar, zoneFib70, rightEdge, zoneFib70, xloc=xloc.bar_index, color=color.new(zoneColor, 40), style=line.style_dashed, width=1)
+
+                        array.push(zoneBoxes, zoneBox)
+                        array.push(zoneMidLines, zoneMidLine)
+                        array.push(zoneFib30Lines, zoneFib30Line)
+                        array.push(zoneFib70Lines, zoneFib70Line)
+                        array.push(zoneTopArr, zoneTop)
+                        array.push(zoneBotArr, zoneBot)
+                        array.push(zoneMidArr, zoneMid)
+                        array.push(zoneDirArr, candidateDir)
+                        array.push(zoneCreateBarArr, creationBar)
+                        array.push(zoneRightBarArr, rightEdge)
+                        array.push(zoneSourceBarArr, sourceBar)
+                        array.push(zoneActiveArr, true)
+                        array.push(zoneEntryStateArr, 0)
+                        array.push(zoneEntryTriggerArr, na)
+                        array.push(zoneEntrySignaledArr, false)
+
+                        if showDebug
+                            string zoneText = candidateDir == 1 ? "Bull Expansion Zone" : "Bear Expansion Zone"
+                            label.new(bar_index, candidateDir == 1 ? low : high, zoneText, xloc=xloc.bar_index, style=labelStyle, color=color.new(zoneColor, 78), textcolor=color.white, size=size.tiny)
+
+// -----------------------------------------------------------------------------
+// Step 6 + 7 + 8: Mitigation management and optional sweep + MSS entry labels
+// -----------------------------------------------------------------------------
+int activeZones = 0
+if array.size(zoneBoxes) > 0
+    for z = 0 to array.size(zoneBoxes) - 1
+        box activeBox = array.get(zoneBoxes, z)
+        line midLine = array.get(zoneMidLines, z)
+        line fib30Line = array.get(zoneFib30Lines, z)
+        line fib70Line = array.get(zoneFib70Lines, z)
+        int rightEdge = array.get(zoneRightBarArr, z)
+
+        if not na(activeBox)
+            box.set_right(activeBox, rightEdge)
+        if not na(midLine)
+            line.set_x2(midLine, rightEdge)
+        if not na(fib30Line)
+            line.set_x2(fib30Line, rightEdge)
+        if not na(fib70Line)
+            line.set_x2(fib70Line, rightEdge)
+
+        if array.get(zoneActiveArr, z)
+            activeZones += 1
+
+            int zoneDir = array.get(zoneDirArr, z)
+            float zoneTop = array.get(zoneTopArr, z)
+            float zoneBot = array.get(zoneBotArr, z)
+            float zoneMid = array.get(zoneMidArr, z)
+            int createBar = array.get(zoneCreateBarArr, z)
+            color zoneColor = zoneDir == 1 ? color.teal : color.red
+
+            bool mitigated = bar_index > createBar and (zoneDir == 1 ? low <= zoneMid : high >= zoneMid)
+            if mitigated
+                array.set(zoneActiveArr, z, false)
+                activeZones -= 1
+                if deleteOnMitigation
+                    if not na(activeBox)
+                        box.delete(activeBox)
+                        array.set(zoneBoxes, z, na)
+                    if not na(midLine)
+                        line.delete(midLine)
+                        array.set(zoneMidLines, z, na)
+                    if not na(fib30Line)
+                        line.delete(fib30Line)
+                        array.set(zoneFib30Lines, z, na)
+                    if not na(fib70Line)
+                        line.delete(fib70Line)
+                        array.set(zoneFib70Lines, z, na)
+                else
+                    if not na(activeBox)
+                        box.set_bgcolor(activeBox, color.new(zoneColor, 92))
+                        box.set_border_color(activeBox, color.new(zoneColor, 70))
+                    if not na(midLine)
+                        line.set_color(midLine, color.new(zoneColor, 75))
+                    if not na(fib30Line)
+                        line.set_color(fib30Line, color.new(zoneColor, 85))
+                    if not na(fib70Line)
+                        line.set_color(fib70Line, color.new(zoneColor, 85))
+
+                if showDebug
+                    labelStyle = zoneDir == 1 ? label.style_label_down : label.style_label_up
+                    label.new(bar_index, zoneMid, "Zone mitigated", xloc=xloc.bar_index, style=labelStyle, color=color.new(zoneColor, 75), textcolor=color.white, size=size.tiny)
+
+            if array.get(zoneActiveArr, z) and showSignals and not array.get(zoneEntrySignaledArr, z)
+                int entryState = array.get(zoneEntryStateArr, z)
+                float entryTrigger = array.get(zoneEntryTriggerArr, z)
+                bool tradesIntoZone = high >= zoneBot and low <= zoneTop
+                bool hasRecentLow = not na(ta.lowest(low[1], entrySweepLookback))
+                bool hasRecentHigh = not na(ta.highest(high[1], entrySweepLookback))
+
+                if zoneDir == 1
+                    bool sweepLow = hasRecentLow and low < ta.lowest(low[1], entrySweepLookback)
+                    bool reclaimUp = close > open
+                    if entryState == 0 and tradesIntoZone and sweepLow and reclaimUp
+                        array.set(zoneEntryStateArr, z, 1)
+                        array.set(zoneEntryTriggerArr, z, high)
+                        if showDebug
+                            label.new(bar_index, low, "Bull sweep", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.teal, 80), textcolor=color.white, size=size.tiny)
+                    else if entryState == 1 and not na(entryTrigger) and close > entryTrigger
+                        label.new(bar_index, low, "BUY", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.white, size=size.small)
+                        array.set(zoneEntryStateArr, z, 2)
+                        array.set(zoneEntrySignaledArr, z, true)
+                else
+                    bool sweepHigh = hasRecentHigh and high > ta.highest(high[1], entrySweepLookback)
+                    bool reclaimDown = close < open
+                    if entryState == 0 and tradesIntoZone and sweepHigh and reclaimDown
+                        array.set(zoneEntryStateArr, z, 1)
+                        array.set(zoneEntryTriggerArr, z, low)
+                        if showDebug
+                            label.new(bar_index, high, "Bear sweep", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.red, 80), textcolor=color.white, size=size.tiny)
+                    else if entryState == 1 and not na(entryTrigger) and close < entryTrigger
+                        label.new(bar_index, high, "SELL", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.maroon, 0), textcolor=color.white, size=size.small)
+                        array.set(zoneEntryStateArr, z, 2)
+                        array.set(zoneEntrySignaledArr, z, true)
+
+// -----------------------------------------------------------------------------
+// Step 13: Debug overlays
+// -----------------------------------------------------------------------------
+plotshape(showDebug and bullishInternalShift, title="Bullish Internal Shift", style=shape.triangleup, location=location.belowbar, color=color.new(color.teal, 0), size=size.tiny, text="Shift")
+plotshape(showDebug and bearishInternalShift, title="Bearish Internal Shift", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, text="Shift")
+
+int pendingActiveCount = 0
+if array.size(pendingActive) > 0
+    for i = 0 to array.size(pendingActive) - 1
+        if array.get(pendingActive, i)
+            pendingActiveCount += 1
+
+if showDebug
+    table.cell(debugTable, 0, 0, "HTF Bias", text_color=color.white, bgcolor=color.new(color.blue, 80))
+    table.cell(debugTable, 1, 0, f_bias_text(externalBias), text_color=color.white, bgcolor=color.new(externalBias == 1 ? color.teal : externalBias == -1 ? color.red : color.gray, 70))
+    table.cell(debugTable, 0, 1, "Expansion", text_color=color.white, bgcolor=color.new(color.orange, 80))
+    table.cell(debugTable, 1, 1, f_bias_text(expansionDir), text_color=color.white, bgcolor=color.new(expansionDir == 1 ? color.teal : expansionDir == -1 ? color.red : color.gray, 70))
+    table.cell(debugTable, 0, 2, "Pending", text_color=color.white, bgcolor=color.new(color.black, 65))
+    table.cell(debugTable, 1, 2, str.tostring(pendingActiveCount), text_color=color.white, bgcolor=color.new(color.black, 65))
+    table.cell(debugTable, 0, 3, "Active Zones", text_color=color.white, bgcolor=color.new(color.black, 65))
+    table.cell(debugTable, 1, 3, str.tostring(activeZones), text_color=color.white, bgcolor=color.new(color.black, 65))
+    table.cell(debugTable, 0, 4, "HTF Swings", text_color=color.white, bgcolor=color.new(color.black, 65))
+    table.cell(debugTable, 1, 4, "H:" + str.tostring(lastHtfSwingHigh, format.mintick) + "\nL:" + str.tostring(lastHtfSwingLow, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 65))
+else
+    table.clear(debugTable, 0, 0, 1, 4)
