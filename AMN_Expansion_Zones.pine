@@ -24,7 +24,7 @@ minZoneSizeTicks = input.int(0, "Min Zone Size (ticks, 0=off)", minval=0, group=
 groupSignals = "4) Optional Entry Confirmation"
 showSignals = input.bool(false, "Show Sweep + MSS Signals", group=groupSignals)
 signalMssLookback = input.int(3, "MSS Lookback", minval=2, maxval=20, group=groupSignals)
-strictStateEntry = input.bool(true, "Require 1→6 State Sequence", group=groupSignals)
+strictStateEntry = input.bool(true, "Require 1-6 State Sequence", group=groupSignals)
 
 groupVisual = "5) Visual / Debug"
 showNumbering = input.bool(false, "Show 1-6 Labels", group=groupVisual)
@@ -353,7 +353,7 @@ if pendingHighCount > 0
 
 //==================================================
 // STEP 6 + STEP 7 + STEP 8:
-// Multi-zone lifecycle, mitigation, and A+ 1→6 state progression.
+// Multi-zone lifecycle, mitigation, and A+ 1-6 state progression.
 //==================================================
 int zoneCount = array.size(zoneBoxes)
 if zoneCount > 0
@@ -469,8 +469,8 @@ if zoneCount > 0
 //==================================================
 // STEP 13: Debug / verification visuals
 //==================================================
-plot(showDebug ? externalBias : na, title="Debug HTF Bias (1/-1)", color=color.new(color.orange, 0), linewidth=2, style=plot.style_step_line)
-plot(showDebug ? expansionDir : na, title="Debug Expansion Dir (1/-1)", color=color.new(color.blue, 0), linewidth=2, style=plot.style_step_line)
+plot(showDebug ? externalBias : na, title="Debug HTF Bias (1/-1)", color=color.new(color.orange, 0), linewidth=2, style=plot.style_stepline)
+plot(showDebug ? expansionDir : na, title="Debug Expansion Dir (1/-1)", color=color.new(color.blue, 0), linewidth=2, style=plot.style_stepline)
 
 plotshape(showDebug and not na(swingLow), title="Debug Swing Low", style=shape.circle, location=location.belowbar, color=color.new(color.teal, 30), size=size.tiny, text="SL")
 plotshape(showDebug and not na(swingHigh), title="Debug Swing High", style=shape.circle, location=location.abovebar, color=color.new(color.red, 30), size=size.tiny, text="SH")
