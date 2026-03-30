@@ -1,5 +1,5 @@
 //@version=5
-indicator("AMN Expansion Zones", shorttitle="AMN Expansion Zones", overlay=true, max_boxes_count=300, max_lines_count=700, max_labels_count=700)
+indicator("AMN Expansion Zones v2", shorttitle="AMN Expansion Zones", overlay=true, max_boxes_count=300, max_lines_count=700, max_labels_count=700)
 
 //==================================================
 // Inputs
@@ -19,14 +19,15 @@ fibLevel = input.float(0.5, "Mitigation Fib Level", minval=0.0, maxval=1.0, step
 showFib = input.bool(true, "Show Fib Lines", group=groupZones)
 showExtraFib = input.bool(true, "Show 0.3 / 0.7 Lines", group=groupZones)
 deleteOnMitigation = input.bool(true, "Delete Zone On Mitigation", group=groupZones)
+minZoneSizeTicks = input.int(0, "Min Zone Size (ticks, 0=off)", minval=0, group=groupZones)
 
 groupSignals = "4) Optional Entry Confirmation"
 showSignals = input.bool(false, "Show Sweep + MSS Signals", group=groupSignals)
-signalSweepLookback = input.int(5, "Sweep Lookback", minval=2, maxval=50, group=groupSignals)
 signalMssLookback = input.int(3, "MSS Lookback", minval=2, maxval=20, group=groupSignals)
+strictStateEntry = input.bool(true, "Require 1→6 State Sequence", group=groupSignals)
 
 groupVisual = "5) Visual / Debug"
-showNumbering = input.bool(false, "Show Simplified 1/3/6 Labels", group=groupVisual)
+showNumbering = input.bool(false, "Show 1-6 Labels", group=groupVisual)
 showDebug = input.bool(false, "Show Debug Plots / Labels", group=groupVisual)
 
 //==================================================
@@ -94,6 +95,12 @@ var float htfLastSwingLow = na
 var int externalBias = 0 // 1 bullish, -1 bearish, 0 neutral
 var int expansionDir = 0 // 1 bullish expansion, -1 bearish expansion, 0 none
 
+// Most recent confirmed valid points (for numbering context)
+var int lastValidLowBar = na
+var float lastValidLowPrice = na
+var int lastValidHighBar = na
+var float lastValidHighPrice = na
+
 // Pending valid-low candidates
 var int[] pendingLowSourceBars = array.new_int()
 var float[] pendingLowTops = array.new_float()
@@ -106,7 +113,7 @@ var float[] pendingHighTops = array.new_float()
 var float[] pendingHighBots = array.new_float()
 var int[] pendingHighSwingBars = array.new_int()
 
-// Active and historical zones
+// Zone arrays
 var box[] zoneBoxes = array.new_box()
 var line[] zoneFibMainLines = array.new_line()
 var line[] zoneFibLowLines = array.new_line()
@@ -118,10 +125,21 @@ var int[] zoneDirs = array.new_int()
 var int[] zoneStartBars = array.new_int()
 var int[] zoneSourceBars = array.new_int()
 var bool[] zoneActive = array.new_bool()
-var bool[] zoneSignalArmed = array.new_bool()
+
+// A+ state machine arrays (1-6 mapping)
+// step values:
+// 2 = valid source zone formed
+// 3 = breakout of zone in expansion direction
+// 4 = tap-back rejection pivot formed
+// 5 = new LL/HH formed
+// 6 = sweep of 4 + MSS confirmation
+var int[] zoneStep = array.new_int()
+var float[] zoneBreakRef = array.new_float()
+var float[] zoneStep4Level = array.new_float()
+var int[] zoneStep4Bar = array.new_int()
 var bool[] zoneSignalDone = array.new_bool()
 
-// Debug event flags (series)
+// Debug event flags
 bool dbgValidLowConfirmed = false
 bool dbgValidHighConfirmed = false
 bool dbgZoneMitigated = false
@@ -129,6 +147,7 @@ bool dbgBullInternalShift = false
 bool dbgBearInternalShift = false
 int dbgSourceBar = na
 int dbgMitigatedDir = 0
+int dbgStateEvent = 0
 
 //==================================================
 // STEP 1: HTF bias engine
@@ -161,31 +180,27 @@ if not na(swingLow)
     int swingBar = bar_index - localPivotLen
     [srcBarL, srcTopL, srcBotL] = f_findBearishSource(localPivotLen, leftScanBars)
     srcBarL := int(srcBarL)
-    bool canQueue = not na(srcBarL) and srcBarL < swingBar and not f_containsInt(pendingLowSourceBars, srcBarL)
-    if canQueue
+    bool canQueueLow = not na(srcBarL) and srcBarL < swingBar and not f_containsInt(pendingLowSourceBars, srcBarL)
+    if canQueueLow
         array.push(pendingLowSourceBars, srcBarL)
         array.push(pendingLowTops, srcTopL)
         array.push(pendingLowBots, srcBotL)
         array.push(pendingLowSwingBars, swingBar)
         if showDebug
             label.new(srcBarL, srcBotL, "Low source\nbar " + str.tostring(srcBarL), xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.teal, 0), textcolor=color.white, size=size.tiny)
-        if showNumbering
-            label.new(srcBarL, srcBotL, "1", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.teal, 0), textcolor=color.white, size=size.tiny)
 
 if not na(swingHigh)
     int swingBar = bar_index - localPivotLen
     [srcBarH, srcTopH, srcBotH] = f_findBullishSource(localPivotLen, leftScanBars)
     srcBarH := int(srcBarH)
-    bool canQueue = not na(srcBarH) and srcBarH < swingBar and not f_containsInt(pendingHighSourceBars, srcBarH)
-    if canQueue
+    bool canQueueHigh = not na(srcBarH) and srcBarH < swingBar and not f_containsInt(pendingHighSourceBars, srcBarH)
+    if canQueueHigh
         array.push(pendingHighSourceBars, srcBarH)
         array.push(pendingHighTops, srcTopH)
         array.push(pendingHighBots, srcBotH)
         array.push(pendingHighSwingBars, swingBar)
         if showDebug
             label.new(srcBarH, srcTopH, "High source\nbar " + str.tostring(srcBarH), xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
-        if showNumbering
-            label.new(srcBarH, srcTopH, "1", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
 
 //==================================================
 // STEP 4: Internal shift / expansion direction
@@ -219,13 +234,14 @@ if pendingLowCount > 0
         if close > srcTop
             dbgValidLowConfirmed := true
             dbgSourceBar := srcBar
-            if showNumbering
-                label.new(bar_index, low, "3", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.teal, 0), textcolor=color.white, size=size.tiny)
+            lastValidLowBar := srcBar
+            lastValidLowPrice := srcBot
 
-            // Expansion filter: only bullish zones when external + internal both bullish.
             bool canCreateBullZone = externalBias == 1 and expansionDir == 1
             bool duplicateZone = f_zoneExists(zoneSourceBars, zoneDirs, srcBar, 1)
-            if canCreateBullZone and not duplicateZone
+            float sizeTicks = (srcTop - srcBot) / syminfo.mintick
+            bool bigEnough = minZoneSizeTicks == 0 or sizeTicks >= minZoneSizeTicks
+            if canCreateBullZone and not duplicateZone and bigEnough
                 int leftX = bar_index
                 int rightX = bar_index + zoneExtendBars
                 float zoneTop = srcTop
@@ -256,8 +272,16 @@ if pendingLowCount > 0
                 array.push(zoneStartBars, bar_index)
                 array.push(zoneSourceBars, srcBar)
                 array.push(zoneActive, true)
-                array.push(zoneSignalArmed, false)
+                array.push(zoneStep, 2)
+                array.push(zoneBreakRef, zoneTop)
+                array.push(zoneStep4Level, na)
+                array.push(zoneStep4Bar, na)
                 array.push(zoneSignalDone, false)
+
+                if showNumbering
+                    if not na(lastValidHighBar)
+                        label.new(lastValidHighBar, lastValidHighPrice, "1", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.blue, 30), textcolor=color.white, size=size.tiny)
+                    label.new(srcBar, srcBot, "2", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.teal, 0), textcolor=color.white, size=size.tiny)
 
             array.remove(pendingLowSourceBars, i)
             array.remove(pendingLowTops, i)
@@ -273,13 +297,14 @@ if pendingHighCount > 0
         if close < srcBot
             dbgValidHighConfirmed := true
             dbgSourceBar := srcBar
-            if showNumbering
-                label.new(bar_index, high, "3", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+            lastValidHighBar := srcBar
+            lastValidHighPrice := srcTop
 
-            // Expansion filter: only bearish zones when external + internal both bearish.
             bool canCreateBearZone = externalBias == -1 and expansionDir == -1
             bool duplicateZone = f_zoneExists(zoneSourceBars, zoneDirs, srcBar, -1)
-            if canCreateBearZone and not duplicateZone
+            float sizeTicks = (srcTop - srcBot) / syminfo.mintick
+            bool bigEnough = minZoneSizeTicks == 0 or sizeTicks >= minZoneSizeTicks
+            if canCreateBearZone and not duplicateZone and bigEnough
                 int leftX = bar_index
                 int rightX = bar_index + zoneExtendBars
                 float zoneTop = srcTop
@@ -310,8 +335,16 @@ if pendingHighCount > 0
                 array.push(zoneStartBars, bar_index)
                 array.push(zoneSourceBars, srcBar)
                 array.push(zoneActive, true)
-                array.push(zoneSignalArmed, false)
+                array.push(zoneStep, 2)
+                array.push(zoneBreakRef, zoneBot)
+                array.push(zoneStep4Level, na)
+                array.push(zoneStep4Bar, na)
                 array.push(zoneSignalDone, false)
+
+                if showNumbering
+                    if not na(lastValidLowBar)
+                        label.new(lastValidLowBar, lastValidLowPrice, "1", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.blue, 30), textcolor=color.white, size=size.tiny)
+                    label.new(srcBar, srcTop, "2", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
 
             array.remove(pendingHighSourceBars, i)
             array.remove(pendingHighTops, i)
@@ -319,7 +352,8 @@ if pendingHighCount > 0
             array.remove(pendingHighSwingBars, i)
 
 //==================================================
-// STEP 6 + STEP 7: Mitigation logic and multi-zone lifecycle management
+// STEP 6 + STEP 7 + STEP 8:
+// Multi-zone lifecycle, mitigation, and A+ 1→6 state progression.
 //==================================================
 int zoneCount = array.size(zoneBoxes)
 if zoneCount > 0
@@ -327,31 +361,85 @@ if zoneCount > 0
         bool isActive = array.get(zoneActive, i)
         if isActive
             int dir = array.get(zoneDirs, i)
-            float mid = array.get(zoneMids, i)
             int startBar = array.get(zoneStartBars, i)
             int endBar = startBar + zoneExtendBars
+            float top = array.get(zoneTops, i)
+            float bot = array.get(zoneBots, i)
+            float mid = array.get(zoneMids, i)
+            int step = array.get(zoneStep, i)
+            float breakRef = array.get(zoneBreakRef, i)
+            float step4Level = array.get(zoneStep4Level, i)
+            bool sigDone = array.get(zoneSignalDone, i)
+
             bool expired = bar_index > endBar
             bool mitigated = false
-
             if bar_index > startBar
                 if dir == 1 and low <= mid
                     mitigated := true
                 if dir == -1 and high >= mid
                     mitigated := true
 
+            // State 3: breakout of zone in expansion direction.
+            if bar_index > startBar and step == 2
+                bool broke = dir == 1 ? close > top : close < bot
+                if broke
+                    step := 3
+                    breakRef := dir == 1 ? high : low
+                    dbgStateEvent := 3
+                    if showNumbering
+                        label.new(bar_index, dir == 1 ? low : high, "3", xloc=xloc.bar_index, style=dir == 1 ? label.style_label_up : label.style_label_down, color=dir == 1 ? color.new(color.teal, 0) : color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+
+            // State 4: tap-back rejection pivot.
+            if bar_index > startBar and step == 3
+                bool touchedZone = low <= top and high >= bot
+                bool reject = dir == 1 ? close > open : close < open
+                if touchedZone and reject
+                    step := 4
+                    step4Level := dir == 1 ? low : high
+                    array.set(zoneStep4Bar, i, bar_index)
+                    dbgStateEvent := 4
+                    if showNumbering
+                        label.new(bar_index, step4Level, "4", xloc=xloc.bar_index, style=dir == 1 ? label.style_label_up : label.style_label_down, color=color.new(color.yellow, 10), textcolor=color.black, size=size.tiny)
+
+            // State 5: new LL/HH formed after state 4.
+            if bar_index > startBar and step == 4
+                bool formedNewExtreme = dir == 1 ? high > breakRef : low < breakRef
+                if formedNewExtreme
+                    step := 5
+                    breakRef := dir == 1 ? high : low
+                    dbgStateEvent := 5
+                    if showNumbering
+                        label.new(bar_index, dir == 1 ? high : low, "5", xloc=xloc.bar_index, style=dir == 1 ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)
+
+            // State 6: sweep of 4 + MSS confirmation.
+            bool stateGate = strictStateEntry ? step == 5 : step >= 4
+            if showSignals and stateGate and not sigDone and not na(step4Level)
+                bool swept4 = dir == 1 ? low < step4Level : high > step4Level
+                bool mss = dir == 1 ? close > ta.highest(high[1], signalMssLookback) : close < ta.lowest(low[1], signalMssLookback)
+                if swept4 and mss
+                    step := 6
+                    array.set(zoneSignalDone, i, true)
+                    dbgStateEvent := 6
+                    string txt = dir == 1 ? "BUY" : "SELL"
+                    if showNumbering
+                        txt := "6 " + txt
+                    label.new(bar_index, dir == 1 ? low : high, txt, xloc=xloc.bar_index, style=dir == 1 ? label.style_label_up : label.style_label_down, color=dir == 1 ? color.new(color.teal, 0) : color.new(color.red, 0), textcolor=color.white, size=size.small)
+
+            // Save step updates
+            array.set(zoneStep, i, step)
+            array.set(zoneBreakRef, i, breakRef)
+            array.set(zoneStep4Level, i, step4Level)
+
+            // Deactivation on expiry/mitigation.
             if expired or mitigated
                 array.set(zoneActive, i, false)
-                array.set(zoneSignalArmed, i, false)
-
                 if mitigated
                     dbgZoneMitigated := true
                     dbgMitigatedDir := dir
-
                 box zBox = array.get(zoneBoxes, i)
                 line fibMain = array.get(zoneFibMainLines, i)
                 line fibLow = array.get(zoneFibLowLines, i)
                 line fibHigh = array.get(zoneFibHighLines, i)
-
                 if mitigated and deleteOnMitigation
                     if not na(zBox)
                         box.delete(zBox)
@@ -379,62 +467,13 @@ if zoneCount > 0
                         line.set_color(fibHigh, color.new(color.gray, 65))
 
 //==================================================
-// STEP 8: Optional sweep + MSS entries
-//==================================================
-if showSignals and zoneCount > 0
-    for i = 0 to zoneCount - 1
-        bool isActive = array.get(zoneActive, i)
-        bool isDone = array.get(zoneSignalDone, i)
-        if isActive and not isDone
-            int dir = array.get(zoneDirs, i)
-            float top = array.get(zoneTops, i)
-            float bot = array.get(zoneBots, i)
-            int startBar = array.get(zoneStartBars, i)
-            int endBar = startBar + zoneExtendBars
-            bool inWindow = bar_index > startBar and bar_index <= endBar
-            if inWindow
-                bool armed = array.get(zoneSignalArmed, i)
-                bool touchedZone = low <= top and high >= bot
-
-                if dir == 1
-                    bool swept = low < ta.lowest(low[1], signalSweepLookback)
-                    bool reclaim = close > open
-                    if not armed and touchedZone and swept and reclaim
-                        array.set(zoneSignalArmed, i, true)
-                        if showDebug
-                            label.new(bar_index, low, "Bull sweep", xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.teal, 10), textcolor=color.white, size=size.tiny)
-                    else if armed
-                        bool mssUp = close > ta.highest(high[1], signalMssLookback)
-                        if mssUp
-                            string txt = showNumbering ? "6 BUY" : "BUY"
-                            label.new(bar_index, low, txt, xloc=xloc.bar_index, style=label.style_label_up, color=color.new(color.teal, 0), textcolor=color.white, size=size.small)
-                            array.set(zoneSignalDone, i, true)
-                            array.set(zoneSignalArmed, i, false)
-
-                if dir == -1
-                    bool swept = high > ta.highest(high[1], signalSweepLookback)
-                    bool reclaim = close < open
-                    if not armed and touchedZone and swept and reclaim
-                        array.set(zoneSignalArmed, i, true)
-                        if showDebug
-                            label.new(bar_index, high, "Bear sweep", xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.red, 10), textcolor=color.white, size=size.tiny)
-                    else if armed
-                        bool mssDown = close < ta.lowest(low[1], signalMssLookback)
-                        if mssDown
-                            string txt = showNumbering ? "6 SELL" : "SELL"
-                            label.new(bar_index, high, txt, xloc=xloc.bar_index, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
-                            array.set(zoneSignalDone, i, true)
-                            array.set(zoneSignalArmed, i, false)
-
-//==================================================
-// STEP 9 + STEP 13: Debug / verification visuals
+// STEP 13: Debug / verification visuals
 //==================================================
 plot(showDebug ? externalBias : na, title="Debug HTF Bias (1/-1)", color=color.new(color.orange, 0), linewidth=2, style=plot.style_step_line)
 plot(showDebug ? expansionDir : na, title="Debug Expansion Dir (1/-1)", color=color.new(color.blue, 0), linewidth=2, style=plot.style_step_line)
 
 plotshape(showDebug and not na(swingLow), title="Debug Swing Low", style=shape.circle, location=location.belowbar, color=color.new(color.teal, 30), size=size.tiny, text="SL")
 plotshape(showDebug and not na(swingHigh), title="Debug Swing High", style=shape.circle, location=location.abovebar, color=color.new(color.red, 30), size=size.tiny, text="SH")
-
 plotshape(showDebug and dbgBullInternalShift, title="Debug Bull Internal Shift", style=shape.triangleup, location=location.belowbar, color=color.new(color.teal, 0), size=size.tiny, text="INT+")
 plotshape(showDebug and dbgBearInternalShift, title="Debug Bear Internal Shift", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, text="INT-")
 
@@ -445,3 +484,5 @@ if showDebug and dbgValidHighConfirmed
 if showDebug and dbgZoneMitigated
     string mtxt = dbgMitigatedDir == 1 ? "Bull zone mitigated" : "Bear zone mitigated"
     label.new(bar_index, close, mtxt, xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.gray, 35), textcolor=color.white, size=size.tiny)
+if showDebug and dbgStateEvent > 0
+    label.new(bar_index, close, "State " + str.tostring(dbgStateEvent), xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.silver, 20), textcolor=color.black, size=size.tiny)
