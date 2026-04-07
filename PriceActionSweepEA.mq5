@@ -413,6 +413,10 @@ void ProcessNewClosedBar()
    if(currentDayTime==0)
       return;
 
+   datetime closedBarTime=iTime(g_symbol,PERIOD_H1,1);
+   if(closedBarTime==0 || !IsSessionValid(closedBarTime))
+      return;
+
    double sweepExtreme=0.0;
    double structureLevel=0.0;
    DailyBias currentBias=GetDailyBias();
@@ -424,7 +428,7 @@ void ProcessNewClosedBar()
       g_signal.state=SIGNAL_WAIT_BREAK;
       g_signal.direction=currentBias;
       g_signal.referenceDayTime=currentDayTime;
-      g_signal.sweepBarTime=iTime(g_symbol,PERIOD_H1,1);
+      g_signal.sweepBarTime=closedBarTime;
       g_signal.sweepExtreme=sweepExtreme;
       g_signal.structureLevel=structureLevel;
       g_signal.breakBarTime=0;
@@ -443,7 +447,6 @@ void ProcessNewClosedBar()
       return;
      }
 
-   datetime closedBarTime=iTime(g_symbol,PERIOD_H1,1);
    if(closedBarTime<=g_signal.sweepBarTime)
       return;
 
