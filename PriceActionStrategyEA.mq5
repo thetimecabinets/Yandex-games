@@ -94,21 +94,7 @@ int OnInit()
 
 void OnDeinit(const int reason)
   {
-   switch(reason)
-     {
-      case REASON_PROGRAM:
-      case REASON_REMOVE:
-      case REASON_RECOMPILE:
-      case REASON_CHARTCHANGE:
-      case REASON_CHARTCLOSE:
-      case REASON_PARAMETERS:
-      case REASON_ACCOUNT:
-      case REASON_TEMPLATE:
-      case REASON_INITFAILED:
-      case REASON_CLOSE:
-      default:
-         break;
-     }
+   (void)reason;
 
    if(g_atrHandle!=INVALID_HANDLE)
      {
@@ -381,6 +367,15 @@ bool ExecuteTrade(int direction,double sweepPrice,double fibZoneLow,double fibZo
       return(false);
    if(HasOpenPosition())
       return(false);
+   if(!IsSessionValid())
+      return(false);
+
+   const int bias=GetDailyBias();
+   if(direction==1 && bias!=BIAS_BULLISH)
+      return(false);
+   if(direction==-1 && bias!=BIAS_BEARISH)
+      return(false);
+
    if(!IsSpreadValid())
       return(false);
 
@@ -476,7 +471,7 @@ bool HasOpenPosition()
 
       const string symbol=PositionGetString(POSITION_SYMBOL);
       const long magic=PositionGetInteger(POSITION_MAGIC);
-      if(symbol!="" && magic==(long)InpMagicNumber)
+      if(symbol==g_symbol && magic==(long)InpMagicNumber)
          return(true);
      }
    return(false);
